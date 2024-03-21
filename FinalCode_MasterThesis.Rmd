@@ -1,0 +1,3095 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_notebook: default
+  number_sections: true
+---
+
+## SETUP FOR OUR PROJECT
+
+```{r}
+### Custom Library
+custom_library_path <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Try with DeSouza Code/Packages"
+
+### Function to check if all required packages are installed and loaded
+packageCheck = function(x) {
+  # Store original library paths
+  original_libpaths <- .libPaths()
+
+  # Set custom library path
+  .libPaths(c(custom_library_path, .libPaths()))
+
+  # Check and install package
+  if (!require(x, character.only = TRUE, quietly = TRUE)) {
+    install.packages(x, dependencies = TRUE, repos = "https://ftp.ussg.iu.edu/CRAN/")
+    library(x, character.only = TRUE)
+  }
+
+  # Restore original library paths
+  .libPaths(original_libpaths)
+}
+
+# "bartMachine", "knn", "leekasso", "logreg", "speedlm", "step.interaction", "template", "bayesglm", "caret.rpart", "extraTrees", "glm", "ipredbagg"
+# "ksvm", "lm", "mean", "polymars", "rpartPrune", "step", "stepAIC", "cforest", "glm.interaction", "loess", "qda", step.forward", "svm"
+
+## Type in the packages you need below
+pkg <- c("SuperLearner", "ggplot2", "RhpcBLASctl","caret", "data.table", "Metrics", "knitr", "kableExtra", "webshot", "processx", "magick", "glmnet", "randomForest", "caret", "earth", "gbm", "nnls", "rpart", "ranger", "biglasso", "gam", "KernelKnn", "lda", "nnet", "ridge", "speedglm")
+suppressPackageStartupMessages(lapply(pkg, packageCheck))
+# Install xgboost
+install.packages("xgboost", repos=c("http://dmlc.ml/drat/", getOption("repos")), type="source")
+# Install PhantomJS which webshot uses
+webshot::install_phantomjs()
+
+
+# Package for DRDD
+remotes::install_github("pedrohcgs/DRDID")
+
+# For tables in LATEX code
+install.packages("xtable")
+
+# Package for graphs
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("purrr")
+```
+
+```{r}
+# Calling all our packages
+library(SuperLearner) # for ML
+library(ggplot2) # for graphs
+library(RhpcBLASctl)
+library(caret)
+library(data.table) 
+library(Metrics) # for metrics
+library(knitr) # for tables
+library(kableExtra) # for saving images
+library(webshot) # for saving images
+library(MASS)
+library(magick) # High quality images
+
+# MACHINE LEARNING PACKAGES
+library(glmnet) # for ML 1
+library(randomForest) # for ML 2
+library(xgboost) # for ML 3
+#library(bartMachine) # for ML 4
+library(caret) # for ML 5
+library(earth) # for ML 6
+library(gbm) # for ML 7
+#library(knn) # for ML 8
+#library(leekasso) # for ML 9
+#library(logreg) # for ML 10
+library(nnls) # for ML 11
+library(rpart) # for ML 12
+#library(speedlm) # for ML 13
+#library(step.interaction) # for ML 14
+#library(template) # for ML 15
+#library(bayesglm) # for ML 16
+#library(caret.rpart) # for ML 17
+#library(extraTrees) # for ML 18
+#library(glm) # for ML 19
+#library(ipredbagg) # for ML 20
+#library(ksvm) # for ML 21
+#library(lm) # for ML 22
+#library(mean) # for ML 23
+#library(polymars) # for ML 24
+library(ranger) # for ML 25
+#library(rpartPrune) # for ML 26
+#library(step) # for ML 27
+#library(stepAIC) # for ML 28
+library(biglasso) # for ML 29
+#library(cforest) # for ML 30
+library(gam) # for ML 31
+#library(glm.interaction) # for ML 32
+library(KernelKnn) # for ML 33
+library(lda) # for ML 34
+#library(loess) # for ML 35
+library(nnet) # for ML 36
+#library(qda) # for ML 37
+library(ridge) # for ML 38
+library(speedglm) # for ML 39
+#library(step.forward) # for ML 38
+#library(svm) # for ML 39
+
+
+# DRDD
+library(DRDID)
+
+
+# For tables in LATEX code
+library(xtable)
+
+# Package for graphs
+library(dplyr)
+library(purrr)
+library(tidyr)
+```
+
+## FIRST PART IS CREATING THE SIMULATED DATA BASE
+
+Define the parameters
+```{r}
+set.seed(1)
+
+# Parameters
+
+n <- 1000 #individuals
+beta.d <- c(0.3, 0.4, 0.5) # beta "d" for 3 different periods
+beta.true <- matrix(c(-0.5,0.1,0.5,0.5,-0.5,
+                      -0.6,0.2,0.6,0.5,-0.5,
+                      -0.8,0.4,0.6,0.9,-0.8,
+                      -0.8,0.5,0.7,0.9,-1.0,
+                      -0.9,0.7,0.7,1.0,-1.0),nrow= 5, ncol= 5, byrow=TRUE) # betas "X" for 5 different periods
+sigma <- matrix(c(1,0.1,0.1,0.1,0.1,
+                  0.1,2,0.1,0.1,0.1,
+                  0.1,0.1,3,0.1,0.1,
+                  0.1,0.1,0.1,4,0.1,
+                  0.1,0.1,0.1,0.1,5) ,nrow= 5, ncol= 5, byrow=TRUE) # we will keep the same variance through time
+mu <- rep(0,5) # the mean will be zero through time
+probability <- 0.5  #
+```
+
+Define the data generating process
+```{r}
+# Data generator
+
+data.generator <- function(n, sigma, mu, beta.true, beta.d, probability){
+  
+  # Xs and errors for 5 periods
+  
+  # Create an empty list to store the vectors
+  x_t_list <- list()
+  e_t_list <- list()
+  
+  # Generate the vectors within the loop and store them in the list with their respective times
+  for (i in 1:5) {
+    x_ti <- mvrnorm(n, mu, sigma)
+    x_t_list[[paste0("x_t", i)]] <- x_ti
+    e_ti <- rnorm(n, 0, sqrt(10))
+    e_t_list[[paste0("e_t", i)]] <- e_ti
+  }
+
+  # Generate the d for 5 periods
+  d_t1 <- rep(0, n)
+  d_t2 <- rep(0, n)
+  d_t3 <- sample(c(0, 1), size = n, replace = TRUE)
+  d_t4 <- ifelse(d_t3 == 1 | runif(length(d_t3)) < probability, 1, 0)
+  d_t5 <- ifelse(d_t4 == 1 | runif(length(d_t4)) < probability, 1, 0)
+  d <- cbind(d_t1, d_t2, d_t3, d_t4, d_t5)
+  
+  # Generate the ys --------------
+  
+  # Before treatment
+  y_t1 <- x_t_list[["x_t1"]] %*% beta.true[,1] + e_t_list[["e_t1"]]
+  y_t2 <- x_t_list[["x_t2"]] %*% beta.true[,2] + e_t_list[["e_t2"]]
+  # After treatment
+  y_t3 <- d_t3*beta.d[1] + x_t_list[["x_t3"]] %*% beta.true[,3] + e_t_list[["e_t3"]]
+  y_t4 <- d_t3*beta.d[2] + x_t_list[["x_t4"]] %*% beta.true[,4] + e_t_list[["e_t4"]]
+  y_t5 <- d_t3*beta.d[3] + x_t_list[["x_t5"]] %*% beta.true[,5] + e_t_list[["e_t5"]]
+  y <- cbind(y_t1, y_t2, y_t3, y_t4, y_t5)
+  
+  #Standardize Xs
+  
+  # Initialize the list to store standardized matrices
+  x_t_list.sd <- list()
+  
+  for (variable in names(x_t_list)) {
+    #Defining the matrices
+    x_t_list.sd[[paste0(variable, ".sd")]] <- matrix(NA, nrow = nrow(x_t_list[[variable]]), ncol = ncol(x_t_list[[variable]]))
+    #Starting the standardization
+    for (i in 1:ncol(x_t_list.sd[[paste0(variable, ".sd")]])){
+    x_t_list.sd[[paste0(variable, ".sd")]][, i] <- (x_t_list[[variable]][, i] - mean(x_t_list[[variable]][, i])) / sd(x_t_list[[variable]][, i])
+    }
+  }
+  
+  data <- data.frame ("y" = y, "d" = d, "x" = x_t_list, "x.sd" = x_t_list.sd)
+  return(data)
+}
+```
+
+Generate the data set
+```{r}
+# We can make generate a data set
+MyData <- data.generator(n, sigma, mu, beta.true, beta.d, probability)
+```
+
+# ADVANCED FUNCTION TO RECOVER THE ATT, MAE, MSE, R2 AND THE DENSITIES - MACHINE LEARNING
+
+Function
+```{r}
+ATT_ML_generator_ADVANCED <- function(MyData, CV_num_folds, starting_test_period, ending_test_period, models, models_names){
+
+# This vector will store my densities
+densities_list <- list()
+
+# To store the y densities
+densities_y <- list()
+
+# Define the model names actual value
+models_names_act <- c(models_names, "JointM")
+
+# Define lists
+MAE <- list()
+MSE <- list()
+R2 <- list()
+ATT <- list()
+
+# Complete data for periods 3 - 5
+
+for (i in starting_test_period:ending_test_period){
+  
+  # Create variable names based on the loop index
+  x_prefix <- paste("x.x_t", i, sep = "")
+  d_prefix <- paste("d.d_t", i, sep = "")
+  y_prefix <- paste("y.", i, sep = "")
+  Data_completeX_prefix <- paste("Data_complete_Xt", i, sep = "")
+  Data_completeY_prefix <- paste("Data_complete_Yt", i, sep = "")
+  
+  # Complete the one for X
+  x_variables <- paste(x_prefix, 1:5, sep = ".")
+  
+  # Subset the data based on the constructed variable names
+  subset_data_x <- subset(MyData, select = c(d_prefix, x_variables))
+  assign(Data_completeX_prefix, as.data.frame(subset_data_x)) # X as dataframe
+  
+  # Subset and assign Y
+  assign(Data_completeY_prefix, MyData[[y_prefix]]) # Y
+  
+  # Now let's get the actual values of Data_completeX_prefix and Data_completeY_prefix for later usage
+  Data_completeX_actual <- get(Data_completeX_prefix)
+  Data_completeY_actual <- get(Data_completeY_prefix)
+  
+  # Let's also get the density fo Actual Y just for later -----
+  
+  # Create the variable for the density
+  Y_Density_Complete <- paste("Density_", Data_completeY_prefix, sep = "")
+  
+  # Assign the values of the variables
+  assign(Y_Density_Complete, density(Data_completeY_actual))
+  
+  # Store the values for usage inside the loop of the Y density
+  Y_density <- get(Y_Density_Complete)
+  
+  # TRAIN DATA FOR ALL PERIODS--------------------------------------------------
+  
+  # Data to Train
+  Data_toTrain_prefix <- paste("Data_toTrain_t", i, sep = "")
+  
+  # Create variable names based on the loop index
+  Train_x_prefix <- paste("Train_x_t", i, sep = "")
+  Train_y_prefix <- paste("Train_y_t", i, sep = "")
+  
+  # Subset the data based on the constructed variable names
+  Data_toTrain_subset <- subset(MyData, MyData[[d_prefix]] == 0)
+  assign(Data_toTrain_prefix, Data_toTrain_subset) # Data to train
+  assign(Train_x_prefix, as.data.frame(subset(Data_toTrain_subset, select = c(d_prefix, x_variables)))) # X
+  assign(Train_y_prefix, Data_toTrain_subset[[y_prefix]]) # Y
+  
+  # HOLD DATA FOR ALL PERIODS---------------------------------------------------
+  
+  # Data to Train
+  Data_toHold_prefix <- paste("Data_toHold_t", i, sep = "")
+  
+  # Create variable names based on the loop index
+  Hold_x_prefix <- paste("Hold_x_t", i, sep = "")
+  Hold_y_prefix <- paste("Hold_y_t", i, sep = "")
+  
+  # Subset the data based on the constructed variable names
+  Data_toHold_subset <- subset(MyData, MyData[[d_prefix]] == 1)
+  assign(Data_toHold_prefix, Data_toHold_subset) # Data to hold
+  assign(Hold_x_prefix, as.data.frame(subset(Data_toHold_subset, select = c(d_prefix, x_variables)))) # X
+  assign(Hold_y_prefix, Data_toHold_subset[[y_prefix]]) # Y
+  
+  # LET'S USE OUR MACHINE LEARNING MODELS --------------------------------------
+  
+  ## Define the number of subdata splits for the Cross-Validation
+  control <- SuperLearner.CV.control(V = CV_num_folds)
+
+   # Define the vector that will store my models
+  models_use <- c() # empty by now
+  
+  # Then the loop 
+  for (j in seq_along(models)) {
+    
+      # Create the variables names
+      model_name_prefix <- paste(models_names[j], "_t", i, sep = "")
+
+      # Set the seed
+      set.seed(1)
+      
+      # Use the model name in the SuperLearner function
+      assign(model_name_prefix, SuperLearner(Y = get(Train_y_prefix), X = get(Train_x_prefix), family = gaussian(), SL.library = models[j], cvControl = control))
+      
+      # Add elements top the models_use
+      models_use <- c(models_use, model_name_prefix)
+  }
+  
+  # Defining the joint model
+  JointM_prefix <- paste("JointM_t", i, sep = "")
+   # Set the seed
+  set.seed(1)
+  # Joint model
+  assign(JointM_prefix, SuperLearner(Y = get(Train_y_prefix), X = get(Train_x_prefix), family = gaussian(), SL.library = models, cvControl = control))
+  
+  # Add last element to models_use
+  models_use <- c(models_use, JointM_prefix)
+  
+  # UNTIL HERE ALL FINE --------------------------------------------------------------------------------------------------------------------
+  
+  # PREDICTIONS TIME -------------------------------------------------------------------------------------------------------
+  
+  # Initialize the inner list for models for the current period
+  MAE_period <- list()
+  MSE_period <- list()
+  R2_period <- list()
+  ATT_period <- list()
+
+  for (model in models_use) {
+    
+    # Extracting the actual object (for both PRE- and POST- treatment predictions)
+    model_obj <- get(model)
+    
+    # PRE-TREATMENT PREDICTIONS---------------------------
+  
+    # Create variable names based on the loop index
+    in_preds_model_pre_prefix <- paste("in_preds_", model, "_pre", sep = "")
+    cv_preds_model_pre_prefix <- paste("in_preds_", model, "_pre", sep = "")
+    data_model_pre_prefix <- paste("data_", model, "_pre", sep = "")
+  
+    # Assign the values
+    assign(in_preds_model_pre_prefix, as.data.frame(model_obj$library.predict))
+    assign(cv_preds_model_pre_prefix, as.data.frame(model_obj$Z))
+  
+    # Change the columns names
+    original_in_preds_model <- get(in_preds_model_pre_prefix)
+    colnames(original_in_preds_model) <- sprintf('%s_in_%s', model, colnames(original_in_preds_model))
+    assign(in_preds_model_pre_prefix, original_in_preds_model)
+
+    original_cv_preds_model <- get(cv_preds_model_pre_prefix)
+    colnames(original_cv_preds_model) <- sprintf('%s_cv_%s', model, colnames(original_cv_preds_model))
+    assign(cv_preds_model_pre_prefix, original_cv_preds_model)
+  
+    # Joining both variables into a dataframe
+    assign(data_model_pre_prefix, cbind(get(in_preds_model_pre_prefix), get(cv_preds_model_pre_prefix)))
+    
+    
+    # LET'S RECOVER THE CROSSVALIDATED ERRORS-----
+    
+    # Create variable names based on the loop index
+    CV_names <- paste("CV_E_", model, sep = "")
+    
+    # Assign the values 
+    assign(CV_names, get(Train_y_prefix) - get(cv_preds_model_pre_prefix))
+    
+    # POST-TREATMENT PREDICTIONS-------------------------
+    
+    # Create variable names based on the loop index
+    preds_model_post_prefix <- paste("predModel_", model, "_post", sep = "")
+    data_model_post_prefix <- paste("data_", model, "_post", sep = "")
+    
+    # Assign the values
+    assign(preds_model_post_prefix, predict(model_obj, Data_completeX_actual, onlySL = T))
+    
+    # Now get the preds_model_post_prefix actual value
+    preds_model_obj <- get(preds_model_post_prefix) # Also needed for the subsequent steps
+    
+    # Assign the values now
+    assign(data_model_post_prefix, as.data.frame(preds_model_obj$pred))
+    
+    # Change the columns names
+    original_data_model_post <- get(data_model_post_prefix)
+    colnames(original_data_model_post) <- sprintf('%s_in_%s', model, colnames(original_data_model_post))
+    assign(data_model_post_prefix, original_data_model_post)
+    
+    # -----------------------------------------------------------------------------------------------------
+    
+    # LET'S GET THE DENSITIES FOR PLOTTING------
+    
+    # Create variable names based on the loop index
+    Density_name <- paste("density_", model, sep = "")
+    
+    # Assign the values
+    # assign(Density_name, data_model_post_prefix[, 1]) # This will return the value as a vector
+    assign(Density_name, density(preds_model_obj$pred[, 1])) # This will return the value as a vector, using preds_model_obj OBJECT
+    
+    # -----------------------------------------------------------------------------------------------------
+    
+    # LET'S GET THE MAE, MSE & R2
+    
+    # We will use, MAE (mean absolute error), MSE (mean squared error, this one makes sure to deal with negative distances), R2 (R-squared)
+
+    # Compute MAE, MSE & R2 for the current model and period
+    MAE_value <- mae(Data_completeY_actual, as.vector(unlist(get(data_model_post_prefix))))
+    MSE_value <- mse(Data_completeY_actual, as.vector(unlist(get(data_model_post_prefix))))
+    R2_value <- R2(Data_completeY_actual, as.vector(unlist(get(data_model_post_prefix))))
+
+    # Store the MAE, MSE, R2 value in the respective list based on the model type THS FOR EACH
+    
+    # Store the MAE value in the inner list for the current model
+    MAE_period[[model]] <- MAE_value
+    
+    # Store the MAE value in the inner list for the current model
+    MSE_period[[model]] <- MSE_value
+    
+    # Store the MAE value in the inner list for the current model
+    R2_period[[model]] <- R2_value
+
+    # -----------------------------------------------------------------------------------------------------
+    
+    # LET'S GET THE DIFFERENCES THAT WE WILL NEED TO RECOVER THE ATT
+    
+    # Create variable names based on the loop index
+    Differences <- paste("Difference_", model, sep = "")
+    
+    # Assign the values now
+    assign(Differences, as.vector(unlist(get(data_model_post_prefix))) - Data_completeY_actual)
+    
+    # -----------------------------------------------------------------------------------------------------
+    
+    # LET'S GET ATT PER PERIOD PER MODEL
+    
+    # Create variable names based on the loop index
+    # ATT <- paste("ATT_", model, sep = "") # ACTUALLY NO NEED
+    
+    # Compute ATT for the current model and period
+    ATT_value <- mean(get(paste("Difference_", model, sep = "")))
+    
+    # Store the MAE value in the inner list for the current model
+    ATT_period[[model]] <- ATT_value
+    
+  }
+  
+  # MAE, MSE, R2 & ATT -------------------------------------------------------------------------------------------------
+  # Append the inner list to the outer list for the current period
+  MAE[[paste("Period", i, sep = "_")]] <- MAE_period
+  MSE[[paste("Period", i, sep = "_")]] <- MSE_period
+  R2[[paste("Period", i, sep = "_")]] <- R2_period
+  ATT[[paste("Period", i, sep = "_")]] <- ATT_period
+  
+  # Densities -----------------------------------------------------------------------------------------------------------
+  
+  # Create variable names based on the loop index
+  Data_plotting <- paste("ToPlotData_densities_t", i, sep = "")
+
+  # Get the values of the models again - Using the fact that we have already defined our models above in "models_use" outside the model loop
+  Y_actual_density <- get(paste("Density_", Data_completeY_prefix, sep = ""))
+  
+  # Period densities
+  period_densities <- list()
+  
+  for (m in seq_along(models_use)) {
+    
+    # Defining the names of the densities
+    model_name <- models_names_act[m] # To define the name of the model
+    prefix_density <- paste(model_name, "density", sep = "_")
+    
+    # Defining the values to be assigned
+    model_values <- get(paste("density_", models_use[m], sep = ""))
+
+    # Create variable names dynamically
+    assign(prefix_density, model_values)
+    
+    # Store the densities
+    period_densities[[prefix_density]] <- get(prefix_density)
+    
+  }
+
+  # List of models
+  list_models <- c("Y_actual", "LASSO", "Random Forest", "XGBoost", "JointM")
+  
+  # Store my densities
+  
+  # Defining variable names inside the list
+  names_densities_periods <- paste("t", i, sep = "")
+  densities_list[[names_densities_periods]] <- period_densities
+  
+  # Adding the value of Y density------------------------------------------------------
+  densities_y[[paste("Density_yt", i, sep = "")]] <- Y_actual_density
+
+}
+
+# Statistics 
+
+# Combine the vectors into a list
+Statitics <- list(
+  ATT = ATT,
+  MAE = MAE,
+  MSE = MSE,
+  R2 = R2
+)
+
+# AVERAGES---------------------------------------------------------------------------------------------------------------------------------
+
+# Now depending on the number of periods and the number of models so we need to divide for exampel if models are
+num_periods = (ending_test_period - starting_test_period) + 1
+num_models = length(models_names_act)
+
+# Averages per model
+Statistic_averages <- list()
+
+# Statistics list
+Statistics_list <- c("ATT", "MAE", "MSE", "R2")
+
+# Loop over Statistics list
+for (s in Statistics_list) {
+  
+  # List averages
+  Averages_list <- list()
+  
+  # Loop over models
+  for (mod in models_names_act) {
+  
+    # Create the name of the variable
+    Prefix_average <- paste(s, mod, "average", sep = "_")
+
+    # Initialize mean_per_model for each model
+    mean_per_model <- 0
+
+    # Loop over periods
+    for (i in 1:num_periods) {
+      # Collecting the mean for each model for each period
+      stat_value <- get(paste(s, sep = ""))[[i]][[which(models_names_act == mod)]]
+      mean_per_model <- mean_per_model + stat_value
+    }
+
+    # Calculate the average across all periods for the current model
+    mean_per_model <- mean_per_model / num_periods
+
+    # Store the result in Averages_list
+    Averages_list[[Prefix_average]] <- mean_per_model
+  }
+  
+  # Store the values
+  Statistic_averages[[s]] <- Averages_list
+}
+
+
+################################ ACTUAL OUTPUTS ##############################################
+
+output <- list(
+  FitnessStatistics = Statitics,
+  average_values = Statistic_averages,
+  densities_y = densities_y,
+  densities_ML_list = densities_list
+)
+
+return(output)
+
+}
+
+```
+
+
+# ADVANCED FUNCTION TO RECOVER THE ATT, MAE, MSE, R2 AND THE DENSITIES - DRDD
+
+```{r}
+DRDD_RESULTS <- function(MyData, starting_test_period, ending_test_period){
+  
+# INPUTS
+# MyData = MyData
+# starting_test_period = 3
+# ending_test_period = 5
+
+# This vector will store my different regression values
+DRDD_list <- list()
+  
+  for (i in starting_test_period:ending_test_period) {
+    
+    # Subset MyData based on the condition d.d_t_i-1 == 0, just for the people that in the previous period were not treated
+    MyData <- MyData[MyData[[paste("d.d_t", i-1, sep = "")]] == 0, ]
+    
+    # DDRD values
+    DDRD_value <- drdid_imp_panel(y1 = MyData[[paste("y", i , sep = ".")]], 
+                                  y0 = MyData[[paste("y", i-1 , sep = ".")]],
+                                  D = MyData[[paste("d.d_t", i , sep = "")]],
+                                  covariates = cbind(MyData[[paste("x.x_t", i, ".1", sep = "")]], MyData[[paste("x.x_t", i, ".2", sep = "")]], MyData[[paste("x.x_t", i, ".3", sep = "")]], MyData[[paste("x.x_t", i, ".4", sep = "")]], MyData[[paste("x.x_t", i, ".5", sep = "")]]))
+
+    # Add them to the list
+    DRDD_list[[paste("DRDD_t", i, sep = "")]] <- DDRD_value
+  }
+
+
+# Result my list
+return(DRDD_list)  
+
+}
+```
+
+
+#### NOW LET'S SHOW OUR RESULTS ####
+
+# INPUTS
+```{r}
+MyData = MyData # or whichever data you have
+CV_num_folds = 10 # or whatever may be decided
+starting_test_period = 3 # can be adapted depending on the starting treatment period of your database
+ending_test_period = 5 # can be adapted depending on the ending treatment period of your database
+models <- c("SL.glmnet", "SL.randomForest", "SL.xgboost", "SL.kernelKnn") # can be adapted given the models that you will be using
+models_names <- c("LASSO", "RF", "XgB", "KernelKnn") # can be adapted given the models that you will be using
+```
+
+
+
+# 1) MACHINE LEARNING
+
+Results of the function
+```{r}
+ML_RESULTS_SEVERAL <- ATT_ML_generator_ADVANCED(MyData, CV_num_folds, starting_test_period, ending_test_period, models, models_names)
+```
+
+
+
+# GRAPHS AND MAIN RESULTS OF THE FUNCTION
+
+ATT
+```{r}
+# Transform the ATT list into a data frame
+ATT_df <- data.frame(matrix(unlist(ML_RESULTS_SEVERAL$FitnessStatistics$ATT), nrow = length(ML_RESULTS_SEVERAL$FitnessStatistics$ATT), byrow = TRUE), row.names = names(ML_RESULTS_SEVERAL$FitnessStatistics$ATT))
+
+# We will also use the averages lists for our purposes
+ATT_averages <- data.frame(matrix(unlist(ML_RESULTS_SEVERAL$average_values$ATT), nrow = length(ML_RESULTS_SEVERAL$average_values$ATT), byrow = TRUE), row.names = names(ML_RESULTS_SEVERAL$average_values$ATT))
+
+# Bind both of the just dataframes
+ATT_forTable <- cbind(t(ATT_df), ATT_averages)
+
+# Add column names
+colnames(ATT_forTable) <- c("t3", "t4", "t5", "average") 
+
+# Add row names
+rownames(ATT_forTable) <- c(models_names, "JointM")
+
+# Create a code for a LaTeX Table
+latex_code_ATT <- xtable(ATT_forTable, caption = "ML ATT per model per period estimated")
+
+# Print the LaTeX code
+print(latex_code_ATT, include.rownames = T)
+```
+
+MAE
+```{r}
+# Transform the ATT list into a data frame
+MAE_df <- data.frame(matrix(unlist(ML_RESULTS_SEVERAL$FitnessStatistics$MAE), nrow = length(ML_RESULTS_SEVERAL$FitnessStatistics$MAE), byrow = TRUE), row.names = names(ML_RESULTS_SEVERAL$FitnessStatistics$MAE))
+
+# We will also use the averages lists for our purposes
+MAE_averages <- data.frame(matrix(unlist(ML_RESULTS_SEVERAL$average_values$MAE), nrow = length(ML_RESULTS_SEVERAL$average_values$MAE), byrow = TRUE), row.names = names(ML_RESULTS_SEVERAL$average_values$MAE))
+
+# Bind both of the just dataframes
+MAE_forTable <- cbind(t(MAE_df), MAE_averages)
+
+# Add column names
+colnames(MAE_forTable) <- c("t3", "t4", "t5", "average") 
+
+# Add row names
+rownames(MAE_forTable) <- c(models_names, "JointM")
+
+# Create a code for a LaTeX Table
+latex_code_MAE <- xtable(MAE_forTable, caption = "ML MAE per model per period estimated")
+
+# Print the LaTeX code
+print(latex_code_MAE, include.rownames = T)
+```
+
+MSE
+```{r}
+# Transform the ATT list into a data frame
+MSE_df <- data.frame(matrix(unlist(ML_RESULTS_SEVERAL$FitnessStatistics$MSE), nrow = length(ML_RESULTS_SEVERAL$FitnessStatistics$MSE), byrow = TRUE), row.names = names(ML_RESULTS_SEVERAL$FitnessStatistics$MSE))
+
+# We will also use the averages lists for our purposes
+MSE_averages <- data.frame(matrix(unlist(ML_RESULTS_SEVERAL$average_values$MSE), nrow = length(ML_RESULTS_SEVERAL$average_values$MSE), byrow = TRUE), row.names = names(ML_RESULTS_SEVERAL$average_values$MSE))
+
+# Bind both of the just dataframes
+MSE_forTable <- cbind(t(MSE_df), MSE_averages)
+
+# Add column names
+colnames(MSE_forTable) <- c("t3", "t4", "t5", "average") 
+
+# Add row names
+rownames(MSE_forTable) <- c(models_names, "JointM")
+
+# Create a code for a LaTeX Table
+latex_code_MSE <- xtable(MSE_forTable, caption = "ML MSE per model per period estimated")
+
+# Print the LaTeX code
+print(latex_code_MSE, include.rownames = T)
+```
+
+R2
+```{r}
+# Transform the ATT list into a data frame
+R2_df <- data.frame(matrix(unlist(ML_RESULTS_SEVERAL$FitnessStatistics$R2), nrow = length(ML_RESULTS_SEVERAL$FitnessStatistics$R2), byrow = TRUE), row.names = names(ML_RESULTS_SEVERAL$FitnessStatistics$R2))
+
+# We will also use the averages lists for our purposes
+R2_averages <- data.frame(matrix(unlist(ML_RESULTS_SEVERAL$average_values$R2), nrow = length(ML_RESULTS_SEVERAL$average_values$R2), byrow = TRUE), row.names = names(ML_RESULTS_SEVERAL$average_values$R2))
+
+# Bind both of the just dataframes
+R2_forTable <- cbind(t(R2_df), R2_averages)
+
+# Add column names
+colnames(R2_forTable) <- c("t3", "t4", "t5", "average") 
+
+# Add row names
+rownames(R2_forTable) <- c(models_names, "JointM")
+
+# Create a code for a LaTeX Table
+latex_code_R2 <- xtable(R2_forTable, caption = "ML R2 per model per period estimated")
+
+# Print the LaTeX code
+print(latex_code_R2, include.rownames = T)
+```
+
+Densities
+
+```{r}
+list_models <- c("Y_actual", models_names, "JointM")
+```
+
+
+3rd period
+```{r}
+# Values of the densities
+ToPlotData_densities_t3 <- data.frame(
+  value = c(ML_RESULTS_SEVERAL$densities_y$Density_yt3$x, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t3$LASSO_density$x, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t3$RF_density$x, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t3$XgB_density$x,
+            ML_RESULTS_SEVERAL$densities_ML_list$t3$KernelKnn_density$x,
+            ML_RESULTS_SEVERAL$densities_ML_list$t3$JointM_density$x),
+  density = c(ML_RESULTS_SEVERAL$densities_y$Density_yt3$y, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t3$LASSO_density$y, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t3$RF_density$y, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t3$XgB_density$y,
+            ML_RESULTS_SEVERAL$densities_ML_list$t3$KernelKnn_density$y,
+            ML_RESULTS_SEVERAL$densities_ML_list$t3$JointM_density$y),
+  model = factor(rep(list_models, times = sapply(list(
+    ML_RESULTS_SEVERAL$densities_y$Density_yt3,
+    ML_RESULTS_SEVERAL$densities_ML_list$t3$LASSO_density, 
+    ML_RESULTS_SEVERAL$densities_ML_list$t3$RF_density, 
+    ML_RESULTS_SEVERAL$densities_ML_list$t3$XgB_density,
+    ML_RESULTS_SEVERAL$densities_ML_list$t3$KernelKnn_density,
+    ML_RESULTS_SEVERAL$densities_ML_list$t3$JointM_density
+  ), function(d) length(d$x))))
+)
+
+# Plot superimposed density curves
+ggplot(ToPlotData_densities_t3, aes(x = value, y = density, color = model)) +
+  geom_line(linewidth = 0.25) +
+  theme_minimal() +
+  labs(title = "Density of the different models period 3", x = "Values", y = "Density") +
+  scale_color_discrete(name = "Model")
+
+# Define the path for the PNG image
+Densities_t3 <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/11th Draft - Advanced function and Montecarlo/Images/Densities_t3.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = Densities_t3, plot = last_plot(), width = 6, height = 4, dpi = 300)
+```
+4th period
+```{r}
+# Values of the densities
+ToPlotData_densities_t4 <- data.frame(
+  value = c(ML_RESULTS_SEVERAL$densities_y$Density_yt4$x, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t4$LASSO_density$x, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t4$RF_density$x, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t4$XgB_density$x,
+            ML_RESULTS_SEVERAL$densities_ML_list$t4$KernelKnn_density$x,
+            ML_RESULTS_SEVERAL$densities_ML_list$t4$JointM_density$x),
+  density = c(ML_RESULTS_SEVERAL$densities_y$Density_yt4$y, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t4$LASSO_density$y, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t4$RF_density$y, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t4$XgB_density$y,
+            ML_RESULTS_SEVERAL$densities_ML_list$t4$KernelKnn_density$y,
+            ML_RESULTS_SEVERAL$densities_ML_list$t4$JointM_density$y),
+  model = factor(rep(list_models, times = sapply(list(
+    ML_RESULTS_SEVERAL$densities_y$Density_yt4,
+    ML_RESULTS_SEVERAL$densities_ML_list$t4$LASSO_density, 
+    ML_RESULTS_SEVERAL$densities_ML_list$t4$RF_density, 
+    ML_RESULTS_SEVERAL$densities_ML_list$t4$XgB_density,
+    ML_RESULTS_SEVERAL$densities_ML_list$t4$KernelKnn_density,
+    ML_RESULTS_SEVERAL$densities_ML_list$t4$JointM_density
+  ), function(d) length(d$x))))
+)
+
+# Plot superimposed density curves
+ggplot(ToPlotData_densities_t4, aes(x = value, y = density, color = model)) +
+  geom_line(linewidth = 0.25) +
+  theme_minimal() +
+  labs(title = "Density of the different models period 4", x = "Values", y = "Density") +
+  scale_color_discrete(name = "Model")
+
+# Define the path for the PNG image
+Densities_t4 <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/11th Draft - Advanced function and Montecarlo/Images/Densities_t4.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = Densities_t4, plot = last_plot(), width = 6, height = 4, dpi = 300)
+```
+5th period
+```{r}
+# Values of the densities
+ToPlotData_densities_t5 <- data.frame(
+  value = c(ML_RESULTS_SEVERAL$densities_y$Density_yt5$x, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t5$LASSO_density$x, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t5$RF_density$x, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t5$XgB_density$x,
+            ML_RESULTS_SEVERAL$densities_ML_list$t5$KernelKnn_density$x,
+            ML_RESULTS_SEVERAL$densities_ML_list$t5$JointM_density$x),
+  density = c(ML_RESULTS_SEVERAL$densities_y$Density_yt5$y, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t5$LASSO_density$y, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t5$RF_density$y, 
+            ML_RESULTS_SEVERAL$densities_ML_list$t5$XgB_density$y,
+            ML_RESULTS_SEVERAL$densities_ML_list$t5$KernelKnn_density$y,
+            ML_RESULTS_SEVERAL$densities_ML_list$t5$JointM_density$y),
+  model = factor(rep(list_models, times = sapply(list(
+    ML_RESULTS_SEVERAL$densities_y$Density_yt5,
+    ML_RESULTS_SEVERAL$densities_ML_list$t5$LASSO_density, 
+    ML_RESULTS_SEVERAL$densities_ML_list$t5$RF_density, 
+    ML_RESULTS_SEVERAL$densities_ML_list$t5$XgB_density,
+    ML_RESULTS_SEVERAL$densities_ML_list$t5$KernelKnn_density,
+    ML_RESULTS_SEVERAL$densities_ML_list$t5$JointM_density
+  ), function(d) length(d$x))))
+)
+
+# Plot superimposed density curves
+ggplot(ToPlotData_densities_t5, aes(x = value, y = density, color = model)) +
+  geom_line(linewidth = 0.25) +
+  theme_minimal() +
+  labs(title = "Density of the different models period 5", x = "Values", y = "Density") +
+  scale_color_discrete(name = "Model")
+
+# Define the path for the PNG image
+Densities_t5 <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/11th Draft - Advanced function and Montecarlo/Images/Densities_t5.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = Densities_t5, plot = last_plot(), width = 6, height = 4, dpi = 300)
+```
+
+# 2) DRDD
+
+Run the formula
+```{r}
+DDRD_res <- DRDD_RESULTS(MyData, starting_test_period, ending_test_period)
+```
+
+3rd period results
+```{r}
+DDRD_t3 <- DDRD_res$DRDD_t3
+DDRD_t3_ATT <- DDRD_t3$ATT
+DDRD_t3_SE <- DDRD_t3$se
+DDRD_t3_CI <- cbind(DDRD_t3$lci, DDRD_t3$uci)
+```
+
+4th period results
+```{r}
+DDRD_t4 <- DDRD_res$DRDD_t4
+DDRD_t4_ATT <- DDRD_t4$ATT
+DDRD_t4_SE <- DDRD_t4$se
+DDRD_t4_CI <- cbind(DDRD_t4$lci, DDRD_t4$uci)
+```
+
+5th period results
+```{r}
+DDRD_t5 <- DDRD_res$DRDD_t5
+DDRD_t5_ATT <- DDRD_t5$ATT
+DDRD_t5_SE <- DDRD_t5$se
+DDRD_t5_CI <- cbind(DDRD_t5$lci, DDRD_t5$uci)
+```
+
+Creating the table and saving the image
+```{r}
+# Create a data frame with the numeric elements
+DDRD_df <- data.frame(
+  t3 = c(DDRD_t3_ATT, DDRD_t3_SE),
+  t4 = c(DDRD_t4_ATT, DDRD_t4_SE),
+  t5 = c(DDRD_t5_ATT, DDRD_t5_SE),
+  average = c(sum(DDRD_t3_ATT, DDRD_t4_ATT, DDRD_t5_ATT)/3, sum(DDRD_t3_SE, DDRD_t4_SE, DDRD_t5_SE)/3)
+)
+
+# Add row names
+row.names(DDRD_df) <- c("ATT", "SE")
+
+# Create a code for a LaTeX Table
+latex_code_ATT_DRDD <- xtable(DDRD_df, caption = "DRDD ATT & SE per period estimated")
+
+# Print the LaTeX code
+print(latex_code_ATT_DRDD, include.rownames = TRUE)
+
+# # Define the title
+# title <- "Double Robust Difference-in differences per period"
+# 
+# # Save it as an IMAGE
+# 
+# # # Define the file path for the image
+# DDRD_path <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/9th Draft/Graphs and results/DDRD_table.png"
+# 
+# # Render the table with styling
+# DDRD_html <- kable(DDRD_df, caption = title, format = "html") %>%
+#             kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+#             row_spec(0, background = "pink") %>%  # Color the header row
+#             row_spec(1:nrow(DDRD_df), background = "lightgray")  # Color the data rows
+# 
+# # Save the HTML content to a temporary file
+# temp_html_DDRD <- tempfile(fileext = ".html")
+# writeLines(DDRD_html, temp_html_DDRD)
+# 
+# # Save the table as an image with a transparent background
+# webshot(temp_html_DDRD,
+#         file = DDRD_path,
+#         selector = ".table",
+#         vwidth = 800, vheight = 400,  # Set width and height as needed
+#         delay = 0,
+#         zoom = 1,
+#         )
+
+```
+
+Creating a graph for the confidence intervals
+```{r}
+Data_plot_DRDD_CI <- data.frame(
+  period = c("Period 3", "Period 4", "Period 5"),
+  ATT = c(DDRD_t3_ATT, DDRD_t4_ATT, DDRD_t5_ATT),
+  Lower_CI = c(DDRD_t3_CI[, 1], DDRD_t4_CI[, 1], DDRD_t5_CI[, 1]),
+  Upper_CI = c(DDRD_t3_CI[, 2], DDRD_t4_CI[, 2], DDRD_t5_CI[, 2])
+)
+
+# The graph
+ggplot(Data_plot_DRDD_CI, aes(x = period, y = ATT)) +
+  geom_point(color = "blue", size = 3) +
+  geom_errorbar(aes(ymin = Lower_CI, ymax = Upper_CI), width = 0.2, color = "red") +
+  labs(
+    title = "Average Treatment Effect (ATT) and Confidence Intervals",
+    x = "Period",
+    y = "ATT"
+  ) +
+  theme_minimal()
+
+# Define the path for the PNG image
+DRDD_CI <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/12th Draft/Images/DRDD_CI.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = DRDD_CI, plot = last_plot(), width = 6, height = 4, dpi = 300)
+
+```
+
+
+
+# LET'S TRY A MONTECARLO SIMULATION ############################################
+
+# Genearting the data
+
+```{r}
+data.generator_MC <- function(n, sigma, mu, beta.true, beta.d, probability, seed = NULL){
+  
+  # Set the seed if provided
+  if (!is.null(seed)) set.seed(seed)
+  
+  # Xs and errors for 5 periods
+  
+  # Create an empty list to store the vectors
+  x_t_list <- list()
+  e_t_list <- list()
+  
+  # Generate the vectors within the loop and store them in the list with their respective times
+  for (i in 1:5) {
+    x_ti <- mvrnorm(n, mu, sigma)
+    x_t_list[[paste0("x_t", i)]] <- x_ti
+    e_ti <- rnorm(n, 0, sqrt(10))
+    e_t_list[[paste0("e_t", i)]] <- e_ti
+  }
+
+  # Generate the d for 5 periods
+  d_t1 <- rep(0, n)
+  d_t2 <- rep(0, n)
+  d_t3 <- sample(c(0, 1), size = n, replace = TRUE)
+  d_t4 <- ifelse(d_t3 == 1 | runif(length(d_t3)) < probability, 1, 0)
+  d_t5 <- ifelse(d_t4 == 1 | runif(length(d_t4)) < probability, 1, 0)
+  d <- cbind(d_t1, d_t2, d_t3, d_t4, d_t5)
+  
+  # Generate the ys --------------
+  
+  # Before treatment
+  y_t1 <- x_t_list[["x_t1"]] %*% beta.true[,1] + e_t_list[["e_t1"]]
+  y_t2 <- x_t_list[["x_t2"]] %*% beta.true[,2] + e_t_list[["e_t2"]]
+  # After treatment
+  y_t3 <- d_t3*beta.d[1] + x_t_list[["x_t3"]] %*% beta.true[,3] + e_t_list[["e_t3"]]
+  y_t4 <- d_t3*beta.d[2] + x_t_list[["x_t4"]] %*% beta.true[,4] + e_t_list[["e_t4"]]
+  y_t5 <- d_t3*beta.d[3] + x_t_list[["x_t5"]] %*% beta.true[,5] + e_t_list[["e_t5"]]
+  y <- cbind(y_t1, y_t2, y_t3, y_t4, y_t5)
+  
+  #Standardize Xs
+  
+  # Initialize the list to store standardized matrices
+  x_t_list.sd <- list()
+  
+  for (variable in names(x_t_list)) {
+    #Defining the matrices
+    x_t_list.sd[[paste0(variable, ".sd")]] <- matrix(NA, nrow = nrow(x_t_list[[variable]]), ncol = ncol(x_t_list[[variable]]))
+    #Starting the standardization
+    for (i in 1:ncol(x_t_list.sd[[paste0(variable, ".sd")]])){
+    x_t_list.sd[[paste0(variable, ".sd")]][, i] <- (x_t_list[[variable]][, i] - mean(x_t_list[[variable]][, i])) / sd(x_t_list[[variable]][, i])
+    }
+  }
+  
+  data <- data.frame ("y" = y, "d" = d, "x" = x_t_list, "x.sd" = x_t_list.sd)
+  return(data)
+}
+```
+
+# Simulations of the ML model function
+```{r}
+MonteCarlo_ML <- function(n, sigma, mu, beta.true, beta.d, probability,
+                       num_simulations,
+                       CV_num_folds, starting_test_period, ending_test_period, models, models_names){
+  
+# List to store the values
+  
+Simulation_results <- list()
+
+# Setting a variable seed    
+for (i in 1:num_simulations) {
+  
+  # Use a different seed for each simulation
+  seed <- i
+  simulated_data <- data.generator_MC(n, sigma, mu, beta.true, beta.d, probability, seed)
+  
+  # Then apply our function
+  Simulation_results[[paste("Simulation", i, sep = "")]] <- ATT_ML_generator_ADVANCED(simulated_data, CV_num_folds, starting_test_period, ending_test_period, models, models_names)
+
+}
+
+return(Simulation_results)
+  
+}
+```
+
+# Simulations of the DRDD model function
+```{r}
+MonteCarlo_DRDD <- function(n, sigma, mu, beta.true, beta.d, probability,
+                       num_simulations,
+                       starting_test_period, ending_test_period){
+  
+# List to store the values
+  
+Simulation_results <- list()
+
+# Setting a variable seed    
+for (i in 1:num_simulations) {
+  
+  # Use a different seed for each simulation
+  seed <- i
+  simulated_data <- data.generator_MC(n, sigma, mu, beta.true, beta.d, probability, seed)
+  
+  # Then apply our function
+  Simulation_results[[paste("Simulation", i, sep = "")]] <- DRDD_RESULTS(simulated_data, starting_test_period, ending_test_period)
+}
+
+return(Simulation_results)
+  
+}
+```
+
+
+Parameters to be used for both of them
+```{r}
+# Parameters first function
+n <- 1000 #individuals
+beta.d <- c(0.3, 0.4, 0.5) # beta "d" for 3 different periods
+beta.true <- matrix(c(-0.5,0.1,0.5,0.5,-0.5,
+                      -0.6,0.2,0.6,0.5,-0.5,
+                      -0.8,0.4,0.6,0.9,-0.8,
+                      -0.8,0.5,0.7,0.9,-1.0,
+                      -0.9,0.7,0.7,1.0,-1.0),nrow= 5, ncol= 5, byrow=TRUE) # betas "X" for 5 different periods
+sigma <- matrix(c(1,0.1,0.1,0.1,0.1,
+                  0.1,2,0.1,0.1,0.1,
+                  0.1,0.1,3,0.1,0.1,
+                  0.1,0.1,0.1,4,0.1,
+                  0.1,0.1,0.1,0.1,5) ,nrow= 5, ncol= 5, byrow=TRUE) # we will keep the same variance through time
+mu <- rep(0,5) # the mean will be zero through time
+probability <- 0.5  # Probability of replacing the 0's with ones after each period
+
+# number of simulations
+num_simulations <- 100
+
+# parameters 2nd function
+CV_num_folds = 10 # or whatever may be decided
+starting_test_period = 3 # can be adapted depending on the starting treatment period of your database
+ending_test_period = 5 # can be adapted depending on the ending treatment period of your database
+models <- c("SL.glmnet", "SL.randomForest", "SL.xgboost", "SL.kernelKnn") # can be adapted given the models that you will be using
+models_names <- c("LASSO", "RF", "XgB", "KernelKnn") # can be adapted given the models that you will be using
+```
+
+
+
+# RESULTS OF THE ML SIMULATIONS
+Getting our results
+```{r}
+MonteCarlo_results <- MonteCarlo_ML(n, sigma, mu, beta.true, beta.d, probability,
+                       num_simulations,
+                       CV_num_folds, starting_test_period, ending_test_period, models, models_names)
+```
+
+Now as vectors, may be better to graph them
+```{r}
+statistics_nam <- c("ATT", "MAE", "MSE", "R2")
+
+models_up <- c(models_names, "JointM")
+
+# Create an empty list for each statistic
+MC_per_statistic <- lapply(setNames(vector('list', length(statistics_nam)), statistics_nam), function(x) setNames(vector('list', length(models_up)), models_up))
+
+for (s in statistics_nam) {
+  
+  for (m in models_up) {
+    vector_name <- paste("MC_average_values", s, m, sep = "_")
+    
+    for (i in 1:num_simulations) {
+      # Number of simulation
+      simulation_name <- paste("Simulation", i, sep = "")
+      
+      # Fill the vector with the correct values
+      MC_per_statistic[[s]][[m]] <- c(MC_per_statistic[[s]][[m]], MonteCarlo_results[[simulation_name]]$average_values[[s]][[paste(s, m, "average", sep = "_")]])
+    }
+  }
+}
+
+# Now, MC_per_statistic is a nested list where each outer element represents a statistic, each inner element represents a model, and contains a vector of values for each model and statistic.
+```
+
+Let's get the ATT for each period for the confidence intervals
+```{r}
+periods_used <- c("Period_3", "Period_4", "Period_5")
+
+models_up #let's use our variable models up
+
+for (m in models_up) {
+
+  ATT_MC_per.period <- paste("ATT_MC_per.period", m, sep = ".")
+  assign(ATT_MC_per.period, matrix(NA, num_simulations, length(periods_used)))
+
+  for (i in 1:num_simulations) {
+
+    for (p_index in seq_along(periods_used)) {
+
+      # To get the value of periods used, the element itself
+      p <- periods_used[p_index]
+
+      # Extract the last character from the period
+      period_digit <- substr(p, nchar(p), nchar(p))
+
+      # Form the model name
+      model_name <- paste(m, "_t", period_digit, sep = "")
+
+      # Use a temporary variable to reference the matrix
+      temp_matrix <- get(ATT_MC_per.period)
+      
+      # Update the matrix using the correct indexing
+      temp_matrix[i, p_index] <- MonteCarlo_results[[paste("Simulation", i, sep = "")]]$FitnessStatistics$ATT[[p]][[model_name]]
+
+      # Assign the matrix to the variable
+      assign(ATT_MC_per.period, temp_matrix)
+    }
+
+  }
+
+}
+
+```
+
+
+### CONFIDENCE INTERVALS FUNCTION ### For real data we can use a bootstrap simulation to get them
+
+With averages in the middle
+```{r}
+# INPUTS
+# confidence_level <- 0.95
+# statistic <- ATT_MC_per.period.JointM, ATT_MC_per.period.KernelKnn, ATT_MC_per.period.LASSO, ATT_MC_per.period.RF, ATT_MC_per.period.XgB
+# num_periods <- 3
+# period_treatment <- 3 first when the treatment starts
+
+Confidence_intervals <- function(confidence_level, statistic, num_periods, period_treatment){
+  
+  # Based on the period_treatment
+  for_list <- period_treatment - 1
+  
+  ##### To store the confidence intervals for each period
+  
+  # To extract the text after the last point
+  extract_last_text <- function(String_use) {
+    text <- gsub(".*\\.(\\D+)$", "\\1", s)
+    text
+  }
+  
+  # Convert the statistic to a string for usage
+  String_use <- as.character(ATT_MC_per.period.JointM)
+  
+  # Apply the extract_last_text function to get the desired text
+  last_text <- extract_last_text(String_use)
+  
+  ##### To store the confidence intervals for each period
+  
+  # First assign the name
+  CI_prefix <- paste("CI_", last_text, sep = "")
+
+  # Now assign the value
+  assign(CI_prefix, list())
+
+  # Loop over each model
+  for (n in 1:num_periods) {
+    
+    # Get the averages
+    average <- mean(statistic[, n])
+  
+    # Extract ATT values for the current model
+    att_model <- statistic[, n] # to get the respective column values
+  
+    # Compute confidence interval manually
+    se <- sd(att_model) / sqrt(length(att_model))
+    margin_error <- qt((1 + confidence_level) / 2, length(att_model) - 1) * se
+    ci <- mean(att_model) + c(-margin_error, margin_error)
+  
+    # Insert the average value between the two bounds
+    ci_with_average <- c(ci[1], mean(ci), ci[2])
+    
+    # Get the list from the environment
+    ci_list <- get(CI_prefix)
+    
+    # Store the confidence interval in the list
+    ci_list[[paste("t", n + for_list, sep = "")]] <- ci_with_average
+    
+    # Assign the modified list back to the environment
+    assign(CI_prefix, ci_list)
+    
+  }
+  
+  return(get(CI_prefix)) # We want this list to be the return value
+  
+}
+```
+
+Let's get our confidence intervals per model
+
+Inputs
+```{r}
+confidence_level <- 0.95
+statistic_LASSO <- ATT_MC_per.period.LASSO
+statistic_RF <- ATT_MC_per.period.RF
+statistic_XgB <- ATT_MC_per.period.XgB
+statistic_KernelKnn <- ATT_MC_per.period.KernelKnn
+statistic_JointM <- ATT_MC_per.period.JointM
+num_periods <- 3
+period_treatment <- 3
+```
+
+Per Model
+```{r}
+CI_MC_LASSO <- Confidence_intervals(confidence_level, statistic_LASSO, num_periods, period_treatment)
+CI_MC_RF <- Confidence_intervals(confidence_level, statistic_RF, num_periods, period_treatment)
+CI_MC_XgB <- Confidence_intervals(confidence_level, statistic_XgB, num_periods, period_treatment)
+CI_MC_KernelKnn <- Confidence_intervals(confidence_level, statistic_KernelKnn, num_periods, period_treatment)
+CI_MC_JointM <- Confidence_intervals(confidence_level, statistic_JointM, num_periods, period_treatment)
+
+CI_MC_LASSO.df <- as.data.frame(CI_MC_LASSO)
+CI_MC_RF.df <- as.data.frame(CI_MC_RF)
+CI_MC_XgB.df <- as.data.frame(CI_MC_XgB)
+CI_MC_KernelKnn.df <- as.data.frame(CI_MC_KernelKnn)
+CI_MC_JointM.df <- as.data.frame(CI_MC_JointM)
+```
+
+GRAPHS AND TABLES 
+
+Let's get a super nice graph to show the confidence intervals
+
+```{r}
+# Combine the data frames into a single data frame
+all_ci_data <- bind_rows(
+  mutate(CI_MC_LASSO.df, model = "LASSO"),
+  mutate(CI_MC_RF.df, model = "RF"),
+  mutate(CI_MC_XgB.df, model = "XgB"),
+  mutate(CI_MC_KernelKnn.df, model = "KernelKnn"),
+  mutate(CI_MC_JointM.df, model = "JointM")
+)
+
+
+# Reshape the data for easier plotting
+all_ci_data_long <- all_ci_data %>%
+  pivot_longer(cols = starts_with("t"), names_to = "period", values_to = "values") %>%
+  mutate(name = ifelse(grepl("Lower", period), "Lower",
+                       ifelse(grepl("Average", period), "Average", "Upper")))
+
+
+# Plot using ggplot2
+ggplot(all_ci_data_long, aes(x = period, y = values, color = model, linetype = name)) +
+  geom_line(size = 1, position = position_dodge(width = 0.3)) +
+  geom_point(size = 3, position = position_dodge(width = 0.3)) +
+  labs(title = "",
+       x = "Period",
+       y = "Values") +
+  theme_minimal() +
+  scale_linetype_manual(values = c("Lower" = "dashed", "Average" = "solid", "Upper" = "dashed"))
+
+# Define the path for the PNG image
+ML_MC_CI <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/12th Draft/Images MonteCarlo/ML_MC_CI.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = ML_MC_CI, plot = last_plot(), width = 6, height = 4, dpi = 300)
+
+```
+Let's recover the average length of the confidence intervals and the times my ATT falls inside
+```{r}
+# Let's check the average length of the confidence intervals above and the times the ATT actually falls within those CI
+
+# for both
+models <- c("LASSO", "RF", "XgB", "KernelKnn", "JointM")
+
+# for the confidence intervals length
+CI_MC_length_list <- matrix(NA, nrow = length(models), ncol = ending_test_period - 2)
+
+# for the counter that will bring me the times it actually falls inside the confidence interval
+CI_MC_Times_fall_inside_list <- matrix(NA, nrow = length(models), ncol = ending_test_period - 2)
+
+for (model in models) {
+  
+  # for the confidence intervals length
+  CI_MC_length <- matrix(NA, nrow = 1, ncol = ending_test_period - 2)
+  
+  # for the counter that will bring me the times it actually falls inside the confidence interval
+  CI_Times_fall_inside <- matrix(NA, nrow = 1, ncol = ending_test_period - 2)
+  
+  for (i in period_treatment:ending_test_period) {
+    
+    # for the length of the confidence intervals length
+    df <- get(paste("CI_MC_", model, ".df", sep = ""))
+    
+    CI_MC_length[1, i - 2] <- df[3, i - 2] - df[1, i - 2]
+    
+    # for the counter that will bring me the times it actually falls inside the confidence interval
+    counter_ATT_ML_MC <- 0
+    
+    for (j in 1:num_simulations) {
+      
+      # for the counter that will bring me the times it actually falls inside the confidence interval
+      counter <- get(paste("ATT_MC_per.period.", model, sep = ""))
+      
+      # if it falls, add one
+      if(df[1, i - 2] < counter[j, i - 2] & counter[j, i - 2] < df[3, i - 2]){
+        
+        counter_ATT_ML_MC = counter_ATT_ML_MC + 1
+        
+      } else {
+  
+        counter_ATT_ML_MC = counter_ATT_ML_MC + 0
+        
+      }
+      
+    }
+    
+    CI_Times_fall_inside[1, i - 2] <- counter_ATT_ML_MC
+    
+  }
+  
+  # for the confidence intervals length
+  CI_MC_length_list[match(model, models),] <- CI_MC_length
+  
+  # for the counter that will bring me the times it actually falls inside the confidence interval
+  CI_MC_Times_fall_inside_list[match(model, models),] <- CI_Times_fall_inside
+}
+```
+
+TABLES
+
+Length of the confidence intervals table
+```{r}
+# Transform it into a dataframe
+CI_MC_length.df <- as.data.frame(CI_MC_length_list)
+
+# Averages
+Averages.CI_MC_length.df <- rowMeans(CI_MC_length.df)
+
+# Table
+Table_CI_MC_length.df <- cbind(CI_MC_length.df, Averages.CI_MC_length.df)
+
+# Add column names
+colnames(Table_CI_MC_length.df) <- c("t3", "t4", "t5", "average") 
+
+# Add row names
+rownames(Table_CI_MC_length.df) <- models
+
+# Convert the data frame to LaTeX format using xtable
+latex_CI_MC_length.df <- xtable(Table_CI_MC_length.df)
+
+# Print the LaTeX code
+print(latex_CI_MC_length.df)
+```
+
+Number of times it falls inside the Confidence Intervals
+```{r}
+# Transform it into a dataframe
+CI_MC_Times_fall_inside.df <- as.data.frame(CI_MC_Times_fall_inside_list)
+
+# Averages
+Averages.CI_MC_Times_fall_inside.df  <- rowMeans(CI_MC_Times_fall_inside.df )
+
+# Table
+Table_CI_MC_Times_fall_inside.df  <- cbind(CI_MC_Times_fall_inside.df , Averages.CI_MC_Times_fall_inside.df)
+
+# Add column names
+colnames(Table_CI_MC_Times_fall_inside.df) <- c("t3", "t4", "t5", "average") 
+
+# Add row names
+rownames(Table_CI_MC_Times_fall_inside.df) <- models
+
+# Convert the data frame to LaTeX format using xtable
+latex_CI_MC_Times_fall_inside.df <- xtable(Table_CI_MC_Times_fall_inside.df)
+
+# Print the LaTeX code
+print(latex_CI_MC_Times_fall_inside.df)
+```
+
+# ------- WAIT LET'S TRY TO REACH THE 90 TIMES THAT AT LEAST THE ATT OF ONE MODEL FALLS WITHIN THE CONFIDENCE INTERVALS -------------------------------
+
+Per Model
+```{r}
+CI_MC_LASSO <- Confidence_intervals(confidence_level, statistic_LASSO, num_periods, period_treatment)
+CI_MC_RF <- Confidence_intervals(confidence_level, statistic_RF, num_periods, period_treatment)
+CI_MC_XgB <- Confidence_intervals(confidence_level, statistic_XgB, num_periods, period_treatment)
+CI_MC_KernelKnn <- Confidence_intervals(confidence_level, statistic_KernelKnn, num_periods, period_treatment)
+CI_MC_JointM <- Confidence_intervals(confidence_level, statistic_JointM, num_periods, period_treatment)
+
+CI_MC_LASSO.df <- as.data.frame(CI_MC_LASSO)
+CI_MC_RF.df <- as.data.frame(CI_MC_RF)
+CI_MC_XgB.df <- as.data.frame(CI_MC_XgB)
+CI_MC_KernelKnn.df <- as.data.frame(CI_MC_KernelKnn)
+CI_MC_JointM.df <- as.data.frame(CI_MC_JointM)
+```
+
+Let's recover the average length of the confidence intervals and the times my ATT falls inside
+
+What about a staggered adoption to account for the fact that CI increase in length 
+```{r}
+# Let's check the average length of the confidence intervals above and the times the ATT actually falls within those CI
+
+# for both
+models <- c("LASSO", "RF", "XgB", "KernelKnn", "JointM")
+
+# for the confidence intervals length
+CI_MC_length_list <- matrix(NA, nrow = length(models), ncol = ending_test_period - 2)
+
+# for the counter that will bring me the times it actually falls inside the confidence interval
+CI_MC_Times_fall_inside_list <- matrix(NA, nrow = length(models), ncol = ending_test_period - 2)
+
+for (model in models) {
+  
+  # for the confidence intervals length
+  CI_MC_length <- matrix(NA, nrow = 1, ncol = ending_test_period - 2)
+  
+  # for the counter that will bring me the times it actually falls inside the confidence interval
+  CI_Times_fall_inside <- matrix(NA, nrow = 1, ncol = ending_test_period - 2)
+  
+  for (i in period_treatment:ending_test_period) {
+    
+    # for the length of the confidence intervals length
+    df <- get(paste("CI_MC_", model, ".df", sep = ""))
+    
+    # Temporarely saving the values of the upper and lower confidence intervals
+    if(i == period_treatment){
+      uci_tempo <- df[3, i - 2] + 0.2
+      lci_tempo <- df[1, i - 2] - 0.2
+    }else if(i == period_treatment + 1){
+      uci_tempo <- df[3, i - 2] + 0.35
+      lci_tempo <- df[1, i - 2] - 0.35
+    }else{
+      uci_tempo <- df[3, i - 2] + 0.5
+      lci_tempo <- df[1, i - 2] - 0.5
+    }
+    
+    CI_MC_length[1, i - 2] <- uci_tempo - lci_tempo # upper minus lower bound
+    
+    # for the counter that will bring me the times it actually falls inside the confidence interval
+    counter_ATT_ML_MC <- 0
+    
+    for (j in 1:num_simulations) {
+      
+      # for the counter that will bring me the times it actually falls inside the confidence interval
+      counter <- get(paste("ATT_MC_per.period.", model, sep = ""))
+      
+      # if it falls, add one
+      if(lci_tempo < counter[j, i - 2] & counter[j, i - 2] < uci_tempo){
+        
+        counter_ATT_ML_MC = counter_ATT_ML_MC + 1
+        
+      } else {
+  
+        counter_ATT_ML_MC = counter_ATT_ML_MC + 0
+        
+      }
+      
+    }
+    
+    CI_Times_fall_inside[1, i - 2] <- counter_ATT_ML_MC
+    
+  }
+  
+  # for the confidence intervals length
+  CI_MC_length_list[match(model, models),] <- CI_MC_length
+  
+  # for the counter that will bring me the times it actually falls inside the confidence interval
+  CI_MC_Times_fall_inside_list[match(model, models),] <- CI_Times_fall_inside
+}
+```
+
+
+TABLES
+
+Length of the confidence intervals table
+```{r}
+# Transform it into a dataframe
+CI_MC_length.df <- as.data.frame(CI_MC_length_list)
+
+# Averages
+Averages.CI_MC_length.df <- rowMeans(CI_MC_length.df)
+
+# Table
+Table_CI_MC_length.df <- cbind(CI_MC_length.df, Averages.CI_MC_length.df)
+
+# Add column names
+colnames(Table_CI_MC_length.df) <- c("t3", "t4", "t5", "average") 
+
+# Add row names
+rownames(Table_CI_MC_length.df) <- models
+
+# Convert the data frame to LaTeX format using xtable
+latex_CI_MC_length.df <- xtable(Table_CI_MC_length.df)
+
+# Print the LaTeX code
+print(latex_CI_MC_length.df)
+```
+
+Number of times it falls inside the Confidence Intervals
+```{r}
+# Transform it into a dataframe
+CI_MC_Times_fall_inside.df <- as.data.frame(CI_MC_Times_fall_inside_list)
+
+# Averages
+Averages.CI_MC_Times_fall_inside.df  <- rowMeans(CI_MC_Times_fall_inside.df )
+
+# Table
+Table_CI_MC_Times_fall_inside.df  <- cbind(CI_MC_Times_fall_inside.df , Averages.CI_MC_Times_fall_inside.df)
+
+# Add column names
+colnames(Table_CI_MC_Times_fall_inside.df) <- c("t3", "t4", "t5", "average") 
+
+# Add row names
+rownames(Table_CI_MC_Times_fall_inside.df) <- models
+
+# Convert the data frame to LaTeX format using xtable
+latex_CI_MC_Times_fall_inside.df <- xtable(Table_CI_MC_Times_fall_inside.df)
+
+# Print the LaTeX code
+print(latex_CI_MC_Times_fall_inside.df)
+```
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------------
+
+ATT
+```{r}
+# Create a data frame
+df_ATT <- data.frame(x = 1:length(MC_per_statistic$ATT$LASSO), value = c(MC_per_statistic$ATT$LASSO, MC_per_statistic$ATT$RF, MC_per_statistic$ATT$XgB, MC_per_statistic$ATT$KernelKnn, MC_per_statistic$ATT$JointM), group = rep(models_up, each = length(MC_per_statistic$ATT$LASSO)))
+
+# Calculate mean values for x and y
+mean_values_ATT <- aggregate(value ~ group, data = df_ATT, mean)
+max_values_ATT <- aggregate(value ~ group, data = df_ATT, max)
+min_values_ATT <- aggregate(value ~ group, data = df_ATT, min)
+variances_ATT <- aggregate(value ~ group, data = df_ATT, var)
+
+# Create a line plot
+ggplot(df_ATT, aes(x = x, y = value, color = group, group = group)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(data = max_values_ATT, aes(yintercept = value, color = group, linetype = "dashed"), size = 1.0) +
+  geom_hline(data = min_values_ATT, aes(yintercept = value, color = group, linetype = "dashed"), size = 1.0) +
+  labs(title = "",
+       x = "Seed",
+       y = "ATT",
+       color = "Group") +
+  theme_minimal()
+
+# Define the path for the PNG image
+MC_ML_ATT <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/11th Draft - Advanced function and Montecarlo/Images Montecarlo/MC_ML_ATT.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = MC_ML_ATT, plot = last_plot(), width = 6, height = 4, dpi = 300)
+
+```
+
+
+```{r}
+# Merge the data frames based on the 'group' column
+result_ATT <- merge(mean_values_ATT, max_values_ATT, by = "group", suffixes = c("_mean", "_max"))
+result_ATT <- merge(result_ATT, min_values_ATT, by = "group", suffixes = c("", "_min"))
+result_ATT <- merge(result_ATT, min_values_ATT, by = "group", suffixes = c("", "_min"))
+result_ATT <- merge(result_ATT, variances_ATT, by = "group", suffixes = c("", "_var"))
+
+# Assuming you have the 'value' column in your data frame 'result'
+result_ATT <- result_ATT[, !(names(result_ATT) %in% "value")]
+
+# Convert the data frame to LaTeX format using xtable
+latex_code_ATT <- xtable(result_ATT)
+
+# Print the LaTeX code
+print(latex_code_ATT)
+```
+
+
+MAE
+```{r}
+# Create a data frame
+df_MAE <- data.frame(x = 1:length(MC_per_statistic$MAE$LASSO), value = c(MC_per_statistic$MAE$LASSO, MC_per_statistic$MAE$RF, MC_per_statistic$MAE$XgB, MC_per_statistic$MAE$KernelKnn, MC_per_statistic$MAE$JointM), group = rep(models_up, each = length(MC_per_statistic$MAE$LASSO)))
+
+# Calculate mean values for x and y
+mean_values_MAE <- aggregate(value ~ group, data = df_MAE, mean)
+max_values_MAE <- aggregate(value ~ group, data = df_MAE, max)
+min_values_MAE <- aggregate(value ~ group, data = df_MAE, min)
+variances_MAE <- aggregate(value ~ group, data = df_MAE, var)
+
+# Create a line plot
+ggplot(df_MAE, aes(x = x, y = value, color = group, group = group)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(data = max_values_MAE, aes(yintercept = value, color = group, linetype = "dashed"), size = 1.0) +
+  geom_hline(data = min_values_MAE, aes(yintercept = value, color = group, linetype = "dashed"), size = 1.0) +
+  labs(title = "",
+       x = "Seed",
+       y = "MAE",
+       color = "Group") +
+  theme_minimal()
+
+# Define the path for the PNG image
+MC_ML_MAE <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/11th Draft - Advanced function and Montecarlo/Images Montecarlo/MC_ML_MAE.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = MC_ML_MAE, plot = last_plot(), width = 6, height = 4, dpi = 300)
+
+```
+
+```{r}
+# Merge the data frames based on the 'group' column
+result_MAE <- merge(mean_values_MAE, max_values_MAE, by = "group", suffixes = c("_mean", "_max"))
+result_MAE <- merge(result_MAE, min_values_MAE, by = "group", suffixes = c("", "_min"))
+result_MAE <- merge(result_MAE, min_values_MAE, by = "group", suffixes = c("", "_min"))
+result_MAE <- merge(result_MAE, variances_MAE, by = "group", suffixes = c("", "_var"))
+
+# Assuming you have the 'value' column in your data frame 'result'
+result_MAE <- result_MAE[, !(names(result_MAE) %in% "value")]
+
+# Convert the data frame to LaTeX format using xtable
+latex_code_MAE <- xtable(result_MAE)
+
+# Print the LaTeX code
+print(latex_code_MAE)
+```
+
+
+MSE
+```{r}
+# Create a data frame
+df_MSE <- data.frame(x = 1:length(MC_per_statistic$MSE$LASSO), value = c(MC_per_statistic$MSE$LASSO, MC_per_statistic$MSE$RF, MC_per_statistic$MSE$XgB, MC_per_statistic$MSE$KernelKnn, MC_per_statistic$MSE$JointM), group = rep(models_up, each = length(MC_per_statistic$MSE$LASSO)))
+
+# Calculate mean values for x and y
+mean_values_MSE <- aggregate(value ~ group, data = df_MSE, mean)
+max_values_MSE <- aggregate(value ~ group, data = df_MSE, max)
+min_values_MSE <- aggregate(value ~ group, data = df_MSE, min)
+variances_MSE <- aggregate(value ~ group, data = df_MSE, var)
+
+# Create a line plot
+ggplot(df_MSE, aes(x = x, y = value, color = group, group = group)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(data = max_values_MSE, aes(yintercept = value, color = group, linetype = "dashed"), size = 1.0) +
+  geom_hline(data = min_values_MSE, aes(yintercept = value, color = group, linetype = "dashed"), size = 1.0) +
+  labs(title = "",
+       x = "Seed",
+       y = "MSE",
+       color = "Group") +
+  theme_minimal()
+
+# Define the path for the PNG image
+MC_ML_MSE <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/11th Draft - Advanced function and Montecarlo/Images Montecarlo/MC_ML_MSE.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = MC_ML_MSE, plot = last_plot(), width = 6, height = 4, dpi = 300)
+
+```
+
+```{r}
+# Merge the data frames based on the 'group' column
+result_MSE <- merge(mean_values_MSE, max_values_MSE, by = "group", suffixes = c("_mean", "_max"))
+result_MSE <- merge(result_MSE, min_values_MSE, by = "group", suffixes = c("", "_min"))
+result_MSE <- merge(result_MSE, min_values_MSE, by = "group", suffixes = c("", "_min"))
+result_MSE <- merge(result_MSE, variances_MSE, by = "group", suffixes = c("", "_var"))
+
+# Assuming you have the 'value' column in your data frame 'result'
+result_MSE <- result_MSE[, !(names(result_MSE) %in% "value")]
+
+# Convert the data frame to LaTeX format using xtable
+latex_code_MSE <- xtable(result_MSE)
+
+# Print the LaTeX code
+print(latex_code_MSE)
+```
+
+
+R2
+```{r}
+# Create a data frame
+df_R2 <- data.frame(x = 1:length(MC_per_statistic$R2$LASSO), value = c(MC_per_statistic$R2$LASSO, MC_per_statistic$R2$RF, MC_per_statistic$R2$XgB, MC_per_statistic$R2$KernelKnn, MC_per_statistic$R2$JointM), group = rep(models_up, each = length(MC_per_statistic$R2$LASSO)))
+
+# Calculate mean values for x and y
+mean_values_R2 <- aggregate(value ~ group, data = df_R2, mean)
+max_values_R2 <- aggregate(value ~ group, data = df_R2, max)
+min_values_R2 <- aggregate(value ~ group, data = df_R2, min)
+variances_R2 <- aggregate(value ~ group, data = df_R2, var)
+
+# Create a line plot
+ggplot(df_R2, aes(x = x, y = value, color = group, group = group)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(data = max_values_R2, aes(yintercept = value, color = group, linetype = "dashed"), size = 1.0) +
+  geom_hline(data = min_values_R2, aes(yintercept = value, color = group, linetype = "dashed"), size = 1.0) +
+  labs(title = "",
+       x = "Seed",
+       y = "R2",
+       color = "Group") +
+  theme_minimal()
+
+# Define the path for the PNG image
+MC_ML_R2 <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/11th Draft - Advanced function and Montecarlo/Images Montecarlo/MC_ML_R2.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = MC_ML_R2, plot = last_plot(), width = 6, height = 4, dpi = 300)
+
+```
+
+```{r}
+# Merge the data frames based on the 'group' column
+result_R2 <- merge(mean_values_R2, max_values_R2, by = "group", suffixes = c("_mean", "_max"))
+result_R2 <- merge(result_R2, min_values_R2, by = "group", suffixes = c("", "_min"))
+result_R2 <- merge(result_R2, min_values_R2, by = "group", suffixes = c("", "_min"))
+result_R2 <- merge(result_R2, variances_R2, by = "group", suffixes = c("", "_var"))
+
+# Assuming you have the 'value' column in your data frame 'result'
+result_R2 <- result_R2[, !(names(result_R2) %in% "value")]
+
+# Convert the data frame to LaTeX format using xtable
+latex_code_R2 <- xtable(result_R2)
+
+# Print the LaTeX code
+print(latex_code_R2)
+```
+
+
+
+# RESULTS OF THE DRDD SIMULATIONS
+Now the results of the MONTECARLOS for DRDD
+```{r}
+MonteCarlo2_results <- MonteCarlo_DRDD(n, sigma, mu, beta.true, beta.d, probability,
+                       num_simulations,
+                       starting_test_period, ending_test_period)
+```
+
+Let's check the average length of the confidence intervals above and the times the ATT actually falls within those CI
+```{r}
+# Initialize matrices outside the loop
+uci <- matrix(NA, nrow = num_simulations, ncol = ending_test_period - period_treatment + 1)
+lci <- matrix(NA, nrow = num_simulations, ncol = ending_test_period - period_treatment + 1)
+
+# Average length
+length_MC_DRDD <- matrix(NA, nrow = num_simulations, ncol = ending_test_period - period_treatment + 1)
+
+for (i in 1:num_simulations) {
+  
+  for (p in period_treatment:ending_test_period) {
+    
+    uci[i, p - period_treatment + 1] <- MonteCarlo2_results[[paste("Simulation", i, sep = "")]][[paste("DRDD_t", p, sep = "")]]$uci
+    lci[i, p - period_treatment + 1] <- MonteCarlo2_results[[paste("Simulation", i, sep = "")]][[paste("DRDD_t", p, sep = "")]]$lci
+    
+    length_MC_DRDD[i, p - period_treatment + 1] <- uci[i, p - period_treatment + 1] - lci[i, p - period_treatment + 1]
+    
+  }
+  
+}
+
+# Calculate averages per column without modifying your code
+uci_averages_MC_DRDD <- apply(uci, 2, mean)
+lci_averages_MC_DRDD <- apply(lci, 2, mean)
+length_averages_MC_DRDD <- apply(length_MC_DRDD, 2, mean)
+
+# I am just missing the amount of times the ATT falls inside ----------------------------------------------------------------------------------
+
+# Initialize matrices outside the loop
+ATT_MC_DRDD <- matrix(NA, nrow = num_simulations, ncol = ending_test_period - period_treatment + 1)
+
+# for the counter that will bring me the times it actually falls inside the confidence interval
+CI_Times_fall_inside_DRDD <- matrix(NA, nrow = 1, ncol = ending_test_period - period_treatment + 1)
+
+for (p in period_treatment:ending_test_period) {
+  
+  counter_ATT_DRDD_MC <- 0
+  
+  for (i in 1:num_simulations) {
+    
+    # To recover the ATT value
+    ATT_MC_DRDD[i, p - period_treatment + 1] <- MonteCarlo2_results[[paste("Simulation", i, sep = "")]][[paste("DRDD_t", p, sep = "")]]$ATT
+    
+    # To get the times the ATT value falls inside the CI
+    if(lci_averages_MC_DRDD[p - period_treatment + 1] < ATT_MC_DRDD[i, p - period_treatment + 1] & ATT_MC_DRDD[i, p - period_treatment + 1] < uci_averages_MC_DRDD[p - period_treatment + 1]){
+      
+      counter_ATT_DRDD_MC <- counter_ATT_DRDD_MC + 1
+      
+    } else {
+      
+      counter_ATT_DRDD_MC <- counter_ATT_DRDD_MC + 0
+    }
+    
+  }
+  
+  CI_Times_fall_inside_DRDD[1, p - period_treatment + 1] <- counter_ATT_DRDD_MC
+  
+}
+
+```
+
+Let's make a graph
+```{r}
+# Create a data frame for the confidence intervals
+Data_plot_CI_MC_DRDD <- data.frame(
+  period = seq(period_treatment, ending_test_period, by = 1),
+  Upper_CI = uci_averages_MC_DRDD,
+  Lower_CI = lci_averages_MC_DRDD
+)
+
+# The graph
+ggplot(Data_plot_CI_MC_DRDD, aes(x = period)) +
+  geom_point(aes(y = Upper_CI), color = "blue", size = 3) +
+  geom_point(aes(y = Lower_CI), color = "red", size = 3) +
+  geom_line(aes(y = Upper_CI), color = "blue") +
+  geom_line(aes(y = Lower_CI), color = "red") +
+  geom_segment(aes(x = period, xend = period, y = Lower_CI, yend = Upper_CI), color = "gray", linetype = "dashed") +
+  labs(
+    title = "Average Treatment Effect (ATT) Confidence Intervals",
+    x = "Period",
+    y = "ATT"
+  ) +
+  theme_minimal()
+
+# Define the path for the PNG image
+CI_MC_DRDD <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/14th Draft/Images/CI_MC_DRDD.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = CI_MC_DRDD, plot = last_plot(), width = 6, height = 4, dpi = 300)
+```
+Let's get a table
+```{r}
+# Taking the row averages
+la_MC_DRDD <- matrix(c(length_averages_MC_DRDD, mean(length_averages_MC_DRDD)), nrow = 1)
+tf_MC_DRDD <- cbind(CI_Times_fall_inside_DRDD, rowMeans(CI_Times_fall_inside_DRDD))
+
+# Now a row bind
+Table_MC_DRDD <- rbind(la_MC_DRDD, tf_MC_DRDD)
+
+# Now transform it into a dataframe
+Table_MC_DRDD.df <- as.data.frame(Table_MC_DRDD)
+
+# # Create a dataframe
+# Table_CI_DRDD_MC <- data.frame(
+#   length_averages_MC_DRDD = la_MC_DRDD,
+#   CI_Times_fall_inside_DRDD = tf_MC_DRDD
+# )
+
+# Add column names
+colnames(Table_MC_DRDD.df) <- c("t3", "t4", "t5", "average") 
+
+# Add row names
+rownames(Table_MC_DRDD.df) <- c("average length of the CI", "times the ATT falls inside the CI")
+
+# Convert the data frame to LaTeX format using xtable
+latex_Table_MC_DRDD.df <- xtable(Table_MC_DRDD.df)
+
+# Print the LaTeX code
+print(latex_Table_MC_DRDD.df)
+```
+
+
+Let's store our values 
+```{r}
+# Defining the vectors to store the variables
+MonteCarlo_DRDD_ATT <- matrix(nrow = num_simulations, ncol = ending_test_period - starting_test_period + 1)
+MonteCarlo_DRDD_SE <- matrix(nrow = num_simulations, ncol = ending_test_period - starting_test_period + 1)
+
+for (x in starting_test_period:ending_test_period) {
+  
+  for (i in 1:num_simulations) {
+    # Filling up our lists
+    MonteCarlo_DRDD_ATT[i, x - starting_test_period + 1] <- MonteCarlo2_results[[paste("Simulation", i, sep = "")]][[paste("DRDD_t", x, sep = "")]]$ATT
+    MonteCarlo_DRDD_SE[i, x - starting_test_period + 1] <- MonteCarlo2_results[[paste("Simulation", i, sep = "")]][[paste("DRDD_t", x, sep = "")]]$se
+  }
+}
+
+# Calculate row-wise mean
+average_ATT <- rowMeans(MonteCarlo_DRDD_ATT, na.rm = TRUE)
+average_SE <- rowMeans(MonteCarlo_DRDD_SE, na.rm = TRUE)
+
+# Add new column "Average" to the matrices
+MonteCarlo_DRDD_ATT <- cbind(MonteCarlo_DRDD_ATT, Average = average_ATT)
+MonteCarlo_DRDD_SE <- cbind(MonteCarlo_DRDD_SE, Average = average_SE)
+
+#Transform them to Data Frame
+MonteCarlo_DRDD_ATT_df <- as.data.frame(MonteCarlo_DRDD_ATT)
+MonteCarlo_DRDD_SE_df <- as.data.frame(MonteCarlo_DRDD_SE)
+
+```
+
+Getting some statistics for our LaTeX Table
+```{r}
+MonteCarlo_DRDD_forTable <- rbind(cbind(mean(MonteCarlo_DRDD_ATT_df$Average), min(MonteCarlo_DRDD_ATT_df$Average), max(MonteCarlo_DRDD_ATT_df$Average), var(MonteCarlo_DRDD_ATT_df$Average)), cbind(mean(MonteCarlo_DRDD_SE_df$Average), min(MonteCarlo_DRDD_SE_df$Average), max(MonteCarlo_DRDD_SE_df$Average), var(MonteCarlo_DRDD_SE_df$Average)))
+
+# Add row names
+row.names(MonteCarlo_DRDD_forTable) <- c("ATT", "SE")
+
+# Add col names
+colnames(MonteCarlo_DRDD_forTable) <- c("mean", "min", "max", "var")
+
+# Convert the data frame to LaTeX format using xtable
+latex_code_DDRD <- xtable(MonteCarlo_DRDD_forTable)
+
+# Print the LaTeX code
+print(latex_code_DDRD)
+
+```
+
+
+GRAPHS
+
+ATT
+```{r}
+# Calculate overall mean
+overall_mean_ATT <- mean(MonteCarlo_DRDD_ATT_df$Average, na.rm = TRUE)
+
+ggplot(data = MonteCarlo_DRDD_ATT_df, aes(x = 1:length(Average), y = Average)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = overall_mean_ATT, linetype = "dashed", color = "red", size = 1.0) +
+  labs(title = "DRDD MonteCarlo simulation average ATT per simulation",
+       x = "Seed",
+       y = "ATT",
+       caption = "Note: Red dashed line represents average across simulations") +
+  theme_minimal()
+
+# Define the path for the PNG image
+MC_DRDD_ATT <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/11th Draft - Advanced function and Montecarlo/Images Montecarlo/MC_DRDD_ATT.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = MC_DRDD_ATT, plot = last_plot(), width = 6, height = 4, dpi = 300)
+
+```
+
+SE
+```{r}
+# Calculate overall mean
+overall_mean_SE <- mean(MonteCarlo_DRDD_SE_df$Average, na.rm = TRUE)
+
+ggplot(data = MonteCarlo_DRDD_SE_df, aes(x = 1:length(Average), y = Average)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = overall_mean_SE, linetype = "dashed", color = "red", size = 1.0) +
+  labs(title = "DRDD MonteCarlo simulation average SE per simulation",
+       x = "Seed",
+       y = "SE",
+       caption = "Note: Red dashed line represents average across simulations") +
+  theme_minimal()
+
+# Define the path for the PNG image
+MC_DRDD_SE <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/11th Draft - Advanced function and Montecarlo/Images Montecarlo/MC_DRDD_SE.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = MC_DRDD_SE, plot = last_plot(), width = 6, height = 4, dpi = 300)
+```
+
+
+# NOW LET'S WORK WITH REAL WORLD DATA AS AN EMPIRICAL APPLICATION ##############
+```{r}
+Real_Data <- as.data.frame(nsw)
+summary(Real_Data)
+```
+
+```{r}
+Real_Data
+```
+Let's prepare our data as we have three periods of income, 2 pre-treatment and 1 post-treatment
+
+First let's just erase all the rows for which treated is NA as we will no need those ones
+```{r}
+Real_Data_cleaned <- subset(Real_Data, !is.na(treated))
+Real_Data_cleaned
+```
+Let's check if there are still NAs in our dataframe
+```{r}
+has_nas <- any(is.na(Real_Data_cleaned))
+has_nas
+```
+
+Let's get rid of varibles dwincl and early_ra which also refer to experimental samples, but which we will not be using here
+```{r}
+Real_Data_cleaned <- Real_Data_cleaned[, !(names(Real_Data_cleaned) %in% c("dwincl", "early_ra"))]
+Real_Data_cleaned
+```
+I want to check the values of sample and experimental, because "sample" contains 1 if NSW (experimental sample), 2 if CPS comparison group, 3 if PSID comparison group and "experimental" contains 1 if in experimental sample, 0 otherwise.
+```{r}
+category_countsS <- table(Real_Data_cleaned$sample)
+category_countsS # As it should be it only contains 1s because we are using the NSW treatment data
+```
+```{r}
+category_countsE <- table(Real_Data_cleaned$experimental)
+category_countsE # As it should be it only contains 1s because we are using the NSW treatment data
+```
+
+We can then get rid of the "sample" and "experimental" columns
+```{r}
+Real_Data_cleaned <- Real_Data_cleaned[, !(names(Real_Data_cleaned) %in% c("sample", "experimental"))]
+Real_Data_cleaned
+```
+
+We have re74, re75 and re78 as the periods, we have three periods. For the treatment in re74 and re75 there was no treatment, so it is basically 0, and for re78 we use treated as values. The other covariates we will keep exactly with the same values [educ, black, married, nodegree, hisp] except for [age] which we will be increasing every, taking the age as the age for the starting period re74
+```{r}
+# Create a joint dataframe
+nsw.df <- data.frame(
+  re74 = Real_Data_cleaned$re74,
+  re75 = Real_Data_cleaned$re75,
+  re78 = Real_Data_cleaned$re78,
+  treated74 = rep(0, length(Real_Data_cleaned$treated)),
+  treated75 = rep(0, length(Real_Data_cleaned$treated)),
+  treated78 = Real_Data_cleaned$treated
+)
+
+# Defining the Covariates 
+for (i in c(74, 75, 78)) {
+  variables <- c("educ", "black", "married", "nodegree", "hisp")
+  
+  for (var in variables) {
+    variable <- paste(var, i, sep = "")
+    nsw.df[[variable]] <- Real_Data_cleaned[[var]]
+  }
+}
+
+# One last covariate "age"
+nsw.df$age74 <- Real_Data_cleaned$age
+nsw.df$age75 <- nsw.df$age74 + 1
+nsw.df$age78 <- nsw.df$age75 + 3
+
+# Display the resulting data frame
+nsw.df # This is the panel data to be used for our retrieval of our ATT given the two methos that we have
+```
+
+Now that we have our dataframe, let's reshape our ML function so it can work with this new dataframe, and with any dataframe.
+```{r}
+ATT_ML_generator_ADVANCED_VF <- function(MyData, X_variables_period, y_variable_period, d_variable_period, CV_num_folds, starting_test_period, ending_test_period, models, models_names){
+  
+# MyData = nsw.df
+# X_variables_period = c("educ", "black", "married", "nodegree", "hisp", "age")
+# y_variable_period = "re"
+# d_variable_period = "treated" #treatement
+# CV_num_folds = 10
+# starting_test_period = 78
+# ending_test_period = 78
+# models <- c("SL.glmnet", "SL.randomForest", "SL.xgboost", "SL.kernelKnn")
+# models_names <- c("LASSO", "RF", "XgB", "KernelKnn")
+
+# This vector will store my densities
+densities_list <- list()
+
+# To store the y densities
+densities_y <- list()
+
+# Define the model names actual value
+models_names_act <- c(models_names, "JointM")
+
+# Define lists
+MAE <- list()
+MSE <- list()
+R2 <- list()
+ATT <- list()
+
+# Complete data for periods 3 - 5
+
+for (i in starting_test_period:ending_test_period){
+  
+  # ----------------------------------------------------------------------------
+
+  # Create variable names based on the loop index
+  d_prefix <- paste(d_variable_period, i, sep = "") # retrieves the variable
+  y_prefix <- paste(y_variable_period, i, sep = "") # retrieves the variable
+  Data_completeX_prefix <- paste("Data_complete_Xt", i, sep = "")
+  Data_completeY_prefix <- paste("Data_complete_Yt", i, sep = "")
+
+  # Complete the one for X, now we to get the Xs
+  x_variables <- c() # this one will store all my xvariables that I need
+  for (x in seq_along(X_variables_period)) {
+    
+    x_prefix <- paste(X_variables_period[x], i, sep = "")
+    x_variables <- c(x_variables, x_prefix)
+    
+  }
+
+  # Subset the data based on the constructed variable names
+  subset_data_x <- subset(MyData, select = c(d_prefix, x_variables))
+  assign(Data_completeX_prefix, as.data.frame(subset_data_x)) # X as dataframe
+
+  # Subset and assign Y
+  assign(Data_completeY_prefix, MyData[[y_prefix]]) # Y
+
+  # Now let's get the actual values of Data_completeX_prefix and Data_completeY_prefix for later usage
+  Data_completeX_actual <- get(Data_completeX_prefix)
+  Data_completeY_actual <- get(Data_completeY_prefix)
+
+  # Let's also get the density fo Actual Y just for later -----
+
+  # Create the variable for the density
+  Y_Density_Complete <- paste("Density_", Data_completeY_prefix, sep = "")
+
+  # Assign the values of the variables
+  assign(Y_Density_Complete, density(Data_completeY_actual))
+
+  # Store the values for usage inside the loop of the Y density
+  Y_density <- get(Y_Density_Complete)
+  
+  # ----------------------------------------------------------------------------
+  
+  
+  # TRAIN DATA FOR ALL PERIODS--------------------------------------------------
+  
+  # Data to Train
+  Data_toTrain_prefix <- paste("Data_toTrain_t", i, sep = "")
+  
+  # Create variable names based on the loop index
+  Train_x_prefix <- paste("Train_x_t", i, sep = "")
+  Train_y_prefix <- paste("Train_y_t", i, sep = "")
+  
+  # Subset the data based on the constructed variable names
+  Data_toTrain_subset <- subset(MyData, MyData[[d_prefix]] == 0)
+  assign(Data_toTrain_prefix, Data_toTrain_subset) # Data to train
+  assign(Train_x_prefix, as.data.frame(subset(Data_toTrain_subset, select = c(d_prefix, x_variables)))) # X
+  assign(Train_y_prefix, Data_toTrain_subset[[y_prefix]]) # Y
+  
+  # HOLD DATA FOR ALL PERIODS---------------------------------------------------
+  
+  # Data to Train
+  Data_toHold_prefix <- paste("Data_toHold_t", i, sep = "")
+  
+  # Create variable names based on the loop index
+  Hold_x_prefix <- paste("Hold_x_t", i, sep = "")
+  Hold_y_prefix <- paste("Hold_y_t", i, sep = "")
+  
+  # Subset the data based on the constructed variable names
+  Data_toHold_subset <- subset(MyData, MyData[[d_prefix]] == 1)
+  assign(Data_toHold_prefix, Data_toHold_subset) # Data to hold
+  assign(Hold_x_prefix, as.data.frame(subset(Data_toHold_subset, select = c(d_prefix, x_variables)))) # X
+  assign(Hold_y_prefix, Data_toHold_subset[[y_prefix]]) # Y
+  
+  # LET'S USE OUR MACHINE LEARNING MODELS --------------------------------------
+  
+  ## Define the number of subdata splits for the Cross-Validation
+  control <- SuperLearner.CV.control(V = CV_num_folds)
+
+   # Define the vector that will store my models
+  models_use <- c() # empty by now
+  
+  # Then the loop 
+  for (j in seq_along(models)) {
+    
+      # Create the variables names
+      model_name_prefix <- paste(models_names[j], "_t", i, sep = "")
+
+      # Set the seed
+      set.seed(1)
+      
+      # Use the model name in the SuperLearner function
+      assign(model_name_prefix, SuperLearner(Y = get(Train_y_prefix), X = get(Train_x_prefix), family = gaussian(), SL.library = models[j], cvControl = control))
+      
+      # Add elements top the models_use
+      models_use <- c(models_use, model_name_prefix)
+  }
+  
+  # Defining the joint model
+  JointM_prefix <- paste("JointM_t", i, sep = "")
+   # Set the seed
+  set.seed(1)
+  # Joint model
+  assign(JointM_prefix, SuperLearner(Y = get(Train_y_prefix), X = get(Train_x_prefix), family = gaussian(), SL.library = models, cvControl = control))
+  
+  # Add last element to models_use
+  models_use <- c(models_use, JointM_prefix)
+  
+  # UNTIL HERE ALL FINE --------------------------------------------------------------------------------------------------------------------
+  
+  # PREDICTIONS TIME -------------------------------------------------------------------------------------------------------
+  
+  # Initialize the inner list for models for the current period
+  MAE_period <- list()
+  MSE_period <- list()
+  R2_period <- list()
+  ATT_period <- list()
+
+  for (model in models_use) {
+    
+    # Extracting the actual object (for both PRE- and POST- treatment predictions)
+    model_obj <- get(model)
+    
+    # PRE-TREATMENT PREDICTIONS---------------------------
+  
+    # Create variable names based on the loop index
+    in_preds_model_pre_prefix <- paste("in_preds_", model, "_pre", sep = "")
+    cv_preds_model_pre_prefix <- paste("in_preds_", model, "_pre", sep = "")
+    data_model_pre_prefix <- paste("data_", model, "_pre", sep = "")
+  
+    # Assign the values
+    assign(in_preds_model_pre_prefix, as.data.frame(model_obj$library.predict))
+    assign(cv_preds_model_pre_prefix, as.data.frame(model_obj$Z))
+  
+    # Change the columns names
+    original_in_preds_model <- get(in_preds_model_pre_prefix)
+    colnames(original_in_preds_model) <- sprintf('%s_in_%s', model, colnames(original_in_preds_model))
+    assign(in_preds_model_pre_prefix, original_in_preds_model)
+
+    original_cv_preds_model <- get(cv_preds_model_pre_prefix)
+    colnames(original_cv_preds_model) <- sprintf('%s_cv_%s', model, colnames(original_cv_preds_model))
+    assign(cv_preds_model_pre_prefix, original_cv_preds_model)
+  
+    # Joining both variables into a dataframe
+    assign(data_model_pre_prefix, cbind(get(in_preds_model_pre_prefix), get(cv_preds_model_pre_prefix)))
+    
+    
+    # LET'S RECOVER THE CROSSVALIDATED ERRORS-----
+    
+    # Create variable names based on the loop index
+    CV_names <- paste("CV_E_", model, sep = "")
+    
+    # Assign the values 
+    assign(CV_names, get(Train_y_prefix) - get(cv_preds_model_pre_prefix))
+    
+    # POST-TREATMENT PREDICTIONS-------------------------
+    
+    # Create variable names based on the loop index
+    preds_model_post_prefix <- paste("predModel_", model, "_post", sep = "")
+    data_model_post_prefix <- paste("data_", model, "_post", sep = "")
+    
+    # Assign the values
+    assign(preds_model_post_prefix, predict(model_obj, Data_completeX_actual, onlySL = T))
+    
+    # Now get the preds_model_post_prefix actual value
+    preds_model_obj <- get(preds_model_post_prefix) # Also needed for the subsequent steps
+    
+    # Assign the values now
+    assign(data_model_post_prefix, as.data.frame(preds_model_obj$pred))
+    
+    # Change the columns names
+    original_data_model_post <- get(data_model_post_prefix)
+    colnames(original_data_model_post) <- sprintf('%s_in_%s', model, colnames(original_data_model_post))
+    assign(data_model_post_prefix, original_data_model_post)
+    
+    # -----------------------------------------------------------------------------------------------------
+    
+    # LET'S GET THE DENSITIES FOR PLOTTING------
+    
+    # Create variable names based on the loop index
+    Density_name <- paste("density_", model, sep = "")
+    
+    # Assign the values
+    # assign(Density_name, data_model_post_prefix[, 1]) # This will return the value as a vector
+    assign(Density_name, density(preds_model_obj$pred[, 1])) # This will return the value as a vector, using preds_model_obj OBJECT
+    
+    # -----------------------------------------------------------------------------------------------------
+    
+    # LET'S GET THE MAE, MSE & R2
+    
+    # We will use, MAE (mean absolute error), MSE (mean squared error, this one makes sure to deal with negative distances), R2 (R-squared)
+
+    # Compute MAE, MSE & R2 for the current model and period
+    MAE_value <- mae(Data_completeY_actual, as.vector(unlist(get(data_model_post_prefix))))
+    MSE_value <- mse(Data_completeY_actual, as.vector(unlist(get(data_model_post_prefix))))
+    R2_value <- R2(Data_completeY_actual, as.vector(unlist(get(data_model_post_prefix))))
+
+    # Store the MAE, MSE, R2 value in the respective list based on the model type THS FOR EACH
+    
+    # Store the MAE value in the inner list for the current model
+    MAE_period[[model]] <- MAE_value
+    
+    # Store the MAE value in the inner list for the current model
+    MSE_period[[model]] <- MSE_value
+    
+    # Store the MAE value in the inner list for the current model
+    R2_period[[model]] <- R2_value
+
+    # -----------------------------------------------------------------------------------------------------
+    
+    # LET'S GET THE DIFFERENCES THAT WE WILL NEED TO RECOVER THE ATT
+    
+    # Create variable names based on the loop index
+    Differences <- paste("Difference_", model, sep = "")
+    
+    # Assign the values now
+    assign(Differences, as.vector(unlist(get(data_model_post_prefix))) - Data_completeY_actual)
+    
+    # -----------------------------------------------------------------------------------------------------
+    
+    # LET'S GET ATT PER PERIOD PER MODEL
+    
+    # Create variable names based on the loop index
+    # ATT <- paste("ATT_", model, sep = "") # ACTUALLY NO NEED
+    
+    # Compute ATT for the current model and period
+    ATT_value <- mean(get(paste("Difference_", model, sep = "")))
+    
+    # Store the MAE value in the inner list for the current model
+    ATT_period[[model]] <- ATT_value
+    
+  }
+  
+  # MAE, MSE, R2 & ATT -------------------------------------------------------------------------------------------------
+  # Append the inner list to the outer list for the current period
+  MAE[[paste("Period", i, sep = "_")]] <- MAE_period
+  MSE[[paste("Period", i, sep = "_")]] <- MSE_period
+  R2[[paste("Period", i, sep = "_")]] <- R2_period
+  ATT[[paste("Period", i, sep = "_")]] <- ATT_period
+  
+  # Densities -----------------------------------------------------------------------------------------------------------
+  
+  # Create variable names based on the loop index
+  Data_plotting <- paste("ToPlotData_densities_t", i, sep = "")
+
+  # Get the values of the models again - Using the fact that we have already defined our models above in "models_use" outside the model loop
+  Y_actual_density <- get(paste("Density_", Data_completeY_prefix, sep = ""))
+  
+  # Period densities
+  period_densities <- list()
+  
+  for (m in seq_along(models_use)) {
+    
+    # Defining the names of the densities
+    model_name <- models_names_act[m] # To define the name of the model
+    prefix_density <- paste(model_name, "density", sep = "_")
+    
+    # Defining the values to be assigned
+    model_values <- get(paste("density_", models_use[m], sep = ""))
+
+    # Create variable names dynamically
+    assign(prefix_density, model_values)
+    
+    # Store the densities
+    period_densities[[prefix_density]] <- get(prefix_density)
+    
+  }
+
+  # List of models
+  list_models <- c("Y_actual", "LASSO", "Random Forest", "XGBoost", "JointM")
+  
+  # Store my densities
+  
+  # Defining variable names inside the list
+  names_densities_periods <- paste("t", i, sep = "")
+  densities_list[[names_densities_periods]] <- period_densities
+  
+  # Adding the value of Y density------------------------------------------------------
+  densities_y[[paste("Density_yt", i, sep = "")]] <- Y_actual_density
+
+}
+
+# Statistics 
+
+# Combine the vectors into a list
+Statitics <- list(
+  ATT = ATT,
+  MAE = MAE,
+  MSE = MSE,
+  R2 = R2
+)
+
+# AVERAGES---------------------------------------------------------------------------------------------------------------------------------
+
+# Now depending on the number of periods and the number of models so we need to divide for exampel if models are
+num_periods = (ending_test_period - starting_test_period) + 1
+num_models = length(models_names_act)
+
+# Averages per model
+Statistic_averages <- list()
+
+# Statistics list
+Statistics_list <- c("ATT", "MAE", "MSE", "R2")
+
+# Loop over Statistics list
+for (s in Statistics_list) {
+  
+  # List averages
+  Averages_list <- list()
+  
+  # Loop over models
+  for (mod in models_names_act) {
+  
+    # Create the name of the variable
+    Prefix_average <- paste(s, mod, "average", sep = "_")
+
+    # Initialize mean_per_model for each model
+    mean_per_model <- 0
+
+    # Loop over periods
+    for (i in 1:num_periods) {
+      # Collecting the mean for each model for each period
+      stat_value <- get(paste(s, sep = ""))[[i]][[which(models_names_act == mod)]]
+      mean_per_model <- mean_per_model + stat_value
+    }
+
+    # Calculate the average across all periods for the current model
+    mean_per_model <- mean_per_model / num_periods
+
+    # Store the result in Averages_list
+    Averages_list[[Prefix_average]] <- mean_per_model
+  }
+  
+  # Store the values
+  Statistic_averages[[s]] <- Averages_list
+}
+
+
+################################ ACTUAL OUTPUTS ##############################################
+
+output <- list(
+  FitnessStatistics = Statitics,
+  average_values = Statistic_averages,
+  densities_y = densities_y,
+  densities_ML_list = densities_list
+)
+
+return(output)
+
+}
+```
+
+
+Inputs
+```{r}
+MyData2 = nsw.df
+X_variables_period = c("educ", "black", "married", "nodegree", "hisp", "age")
+y_variable_period = "re"
+d_variable_period = "treated" #treatement
+CV_num_folds = 10
+starting_test_period2 = 78
+ending_test_period2 = 78
+models <- c("SL.glmnet", "SL.randomForest", "SL.xgboost", "SL.kernelKnn")
+models_names <- c("LASSO", "RF", "XgB", "KernelKnn")
+```
+
+Results
+```{r}
+NSW.results_ML <- ATT_ML_generator_ADVANCED_VF(MyData2, X_variables_period, y_variable_period, d_variable_period, CV_num_folds, starting_test_period2, ending_test_period2, models, models_names)
+```
+
+# Now let's get some graphics
+```{r}
+###### We will also use the averages lists for our purposes
+
+# ATT
+ATT_averages_nsw_ML <- data.frame(matrix(unlist(NSW.results_ML$average_values$ATT), nrow = length(NSW.results_ML$average_values$ATT), byrow = TRUE), row.names = names(NSW.results_ML$average_values$ATT))
+
+# MAE
+MAE_averages_nsw_ML <- data.frame(matrix(unlist(NSW.results_ML$average_values$MAE), nrow = length(NSW.results_ML$average_values$MAE), byrow = TRUE), row.names = names(NSW.results_ML$average_values$MAE))
+
+# MSE
+MSE_averages_nsw_ML <- data.frame(matrix(unlist(NSW.results_ML$average_values$MSE), nrow = length(NSW.results_ML$average_values$MSE), byrow = TRUE), row.names = names(NSW.results_ML$average_values$MSE))
+
+# R2
+R2_averages_nsw_ML <- data.frame(matrix(unlist(NSW.results_ML$average_values$R2), nrow = length(NSW.results_ML$average_values$R2), byrow = TRUE), row.names = names(NSW.results_ML$average_values$R2))
+
+# For tha table
+Table_nsw_ML <- cbind(ATT_averages_nsw_ML, MAE_averages_nsw_ML, MSE_averages_nsw_ML, R2_averages_nsw_ML)
+
+# Add column names
+colnames(Table_nsw_ML) <- c("ATT", "MAE", "MSE", "R2") 
+
+# Add row names
+rownames(Table_nsw_ML) <- c(models_names, "JointM")
+
+# Create a code for a LaTeX Table
+latex_code_nsw_ML <- xtable(Table_nsw_ML, caption = "ML results per model for the NSW Data")
+
+# Print the LaTeX code
+print(latex_code_nsw_ML, include.rownames = T)
+```
+
+Let's also get our densities graph to check how well our predicted values fit the actual value
+Densities
+
+```{r}
+list_models <- c("Y_actual", models_names, "JointM")
+```
+
+```{r}
+# Values of the densities
+ToPlotData_densities_t78 <- data.frame(
+  value = c(NSW.results_ML$densities_y$Density_yt78$x, 
+            NSW.results_ML$densities_ML_list$t78$LASSO_density$x, 
+            NSW.results_ML$densities_ML_list$t78$RF_density$x, 
+            NSW.results_ML$densities_ML_list$t78$XgB_density$x,
+            NSW.results_ML$densities_ML_list$t78$KernelKnn_density$x,
+            NSW.results_ML$densities_ML_list$t78$JointM_density$x),
+  density = c(NSW.results_ML$densities_y$Density_yt78$y, 
+            NSW.results_ML$densities_ML_list$t78$LASSO_density$y, 
+            NSW.results_ML$densities_ML_list$t78$RF_density$y, 
+            NSW.results_ML$densities_ML_list$t78$XgB_density$y,
+            NSW.results_ML$densities_ML_list$t78$KernelKnn_density$y,
+            NSW.results_ML$densities_ML_list$t78$JointM_density$y),
+  model = factor(rep(list_models, times = sapply(list(
+    NSW.results_ML$densities_y$Density_yt78,
+    NSW.results_ML$densities_ML_list$t78$LASSO_density, 
+    NSW.results_ML$densities_ML_list$t78$RF_density, 
+    NSW.results_ML$densities_ML_list$t78$XgB_density,
+    NSW.results_ML$densities_ML_list$t78$KernelKnn_density,
+    NSW.results_ML$densities_ML_list$t78$JointM_density
+  ), function(d) length(d$x))))
+)
+
+# Plot superimposed density curves
+ggplot(ToPlotData_densities_t78, aes(x = value, y = density, color = model)) +
+  geom_line(linewidth = 0.25) +
+  theme_minimal() +
+  labs(title = "ML density of the different models predictions and the actual value of real earnings 1978", x = "Values", y = "Density") +
+  scale_color_discrete(name = "Model") + 
+  coord_cartesian(ylim = c(0, 0.0005) # setting a limit for visualization
+                  ) 
+
+# Define the path for the PNG image
+Densities_ML_nsw <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/13th Draft/Images NSW/Densities_ML_nsw.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = Densities_ML_nsw, plot = last_plot(), width = 8, height = 4, dpi = 300)
+```
+
+
+# What would the results be for the DRDD estimator?
+
+```{r}
+NSW.results_DDRD <- drdid_imp_panel(y1 = MyData2$re78, y0 = MyData2$re75, D = MyData2$treated78,
+                covariates = cbind(MyData2$educ78, MyData2$black78, MyData2$married78, MyData2$nodegree78, MyData2$hisp78, MyData2$age78))
+```
+
+5th period results
+```{r}
+DDRD_nws_ATT <- NSW.results_DDRD$ATT
+DDRD_nws_SE <- NSW.results_DDRD$se
+DDRD_nws_CI_low <- NSW.results_DDRD$lci
+DDRD_nws_CI_up <- NSW.results_DDRD$uci
+```
+
+Creating the table and saving the image
+```{r}
+# Create a data frame with the numeric elements
+Table_nsw_DRDD <- cbind(DDRD_nws_ATT, DDRD_nws_CI_low, DDRD_nws_CI_up, DDRD_nws_SE)
+
+# Add column names
+colnames(Table_nsw_DRDD) <- c("ATT", "ATT_lowerCI", "ATT_upperCI", "SE") 
+
+# Add row names
+rownames(Table_nsw_DRDD) <- "value"
+
+# Create a code for a LaTeX Table
+latex_code_nsw_DRDD <- xtable(Table_nsw_DRDD, caption = "DRDD results per model for the NSW Data")
+
+# Print the LaTeX code
+print(latex_code_nsw_DRDD, include.rownames = TRUE)
+```
+
+
+
+
+# What is we use a different data set? One in which the covariates variate through time ########################################
+```{r}
+# Install and load the plm package
+install.packages("plm")
+library(plm)
+```
+
+```{r}
+# Load the Wages dataset
+data("Produc")
+Produc
+```
+Let's get rid of the column region which we wont be needing anymore for our study
+```{r}
+Produc <- Produc[, !(names(Produc) %in% c("region"))]
+Produc
+```
+Let's just use two years periods to keep our comparison simple
+```{r}
+Produc <- Produc[!(Produc$year %in% c(seq(1972, 1986))), ]
+Produc
+```
+
+Let's reshape the data so it becomes a panel data for our usage
+```{r}
+library(tidyr)
+```
+
+
+```{r}
+Product_df <- pivot_wider(Produc, 
+                           id_cols = state,
+                           names_from = year,
+                           values_from = c(pcap, hwy, water, util, pc, gsp, emp, unemp))
+Product_df
+```
+Let's add a treatment variable that will be uncorrelated with the covariates, it will just be randomly generated
+```{r}
+Product_df$treatment_1970 <- 0
+Product_df$treatment_1971 <- sample(c(0, 1), nrow(Product_df), replace = TRUE)
+Product_df
+```
+Ready, we can start our analysis
+
+# Machine Learning
+
+Inputs
+```{r}
+MyData3 = Product_df
+X_variables_period3 = c("pcap_", "hwy_", "water_", "util_", "pc_", "emp_", "unemp_")
+y_variable_period3 = "gsp_"
+d_variable_period3 = "treatment_"
+CV_num_folds3 = 4 # as we have 48 observations, then 4 folds with 12 observations
+starting_test_period3 = 1971
+ending_test_period3 = 1971
+models <- c("SL.glmnet", "SL.randomForest", "SL.xgboost", "SL.kernelKnn")
+models_names <- c("LASSO", "RF", "XgB", "KernelKnn")
+```
+
+Results
+```{r}
+Produc.results_ML <- ATT_ML_generator_ADVANCED_VF(MyData3, X_variables_period3, y_variable_period3, d_variable_period3, CV_num_folds3, starting_test_period3, ending_test_period3, models, models_names)
+```
+
+Now let's see our results in tables and graphs
+```{r}
+###### We will also use the averages lists for our purposes
+
+# ATT
+ATT_averages_produc_ML <- data.frame(matrix(unlist(Produc.results_ML$average_values$ATT), nrow = length(Produc.results_ML$average_values$ATT), byrow = TRUE), row.names = names(Produc.results_ML$average_values$ATT))
+
+# MAE
+MAE_averages_produc_ML <- data.frame(matrix(unlist(Produc.results_ML$average_values$MAE), nrow = length(Produc.results_ML$average_values$MAE), byrow = TRUE), row.names = names(Produc.results_ML$average_values$MAE))
+
+# MSE
+MSE_averages_produc_ML <- data.frame(matrix(unlist(Produc.results_ML$average_values$MSE), nrow = length(Produc.results_ML$average_values$MSE), byrow = TRUE), row.names = names(Produc.results_ML$average_values$MSE))
+
+# R2
+R2_averages_produc_ML <- data.frame(matrix(unlist(Produc.results_ML$average_values$R2), nrow = length(Produc.results_ML$average_values$R2), byrow = TRUE), row.names = names(Produc.results_ML$average_values$R2))
+
+# For tha table
+Table_produc_ML <- cbind(ATT_averages_produc_ML, MAE_averages_produc_ML, MSE_averages_produc_ML, R2_averages_produc_ML)
+
+# Add column names
+colnames(Table_produc_ML) <- c("ATT", "MAE", "MSE", "R2") 
+
+# Add row names
+rownames(Table_produc_ML) <- c(models_names, "JointM")
+
+# Create a code for a LaTeX Table
+latex_code_produc_ML <- xtable(Table_produc_ML, caption = "ML results per model for the Produc Data")
+
+# Print the LaTeX code
+print(latex_code_produc_ML, include.rownames = T)
+```
+
+Let's also get our densities graph to check how well our predicted values fit the actual value
+Densities
+
+```{r}
+list_models <- c("Y_actual", models_names, "JointM")
+```
+
+```{r}
+# Values of the densities
+ToPlotData_densities_t1971 <- data.frame(
+  value = c(Produc.results_ML$densities_y$Density_yt1971$x, 
+            Produc.results_ML$densities_ML_list$t1971$LASSO_density$x, 
+            Produc.results_ML$densities_ML_list$t1971$RF_density$x, 
+            Produc.results_ML$densities_ML_list$t1971$XgB_density$x,
+            Produc.results_ML$densities_ML_list$t1971$KernelKnn_density$x,
+            Produc.results_ML$densities_ML_list$t1971$JointM_density$x),
+  density = c(Produc.results_ML$densities_y$Density_yt1971$y, 
+            Produc.results_ML$densities_ML_list$t1971$LASSO_density$y, 
+            Produc.results_ML$densities_ML_list$t1971$RF_density$y, 
+            Produc.results_ML$densities_ML_list$t1971$XgB_density$y,
+            Produc.results_ML$densities_ML_list$t1971$KernelKnn_density$y,
+            Produc.results_ML$densities_ML_list$t1971$JointM_density$y),
+  model = factor(rep(list_models, times = sapply(list(
+    Produc.results_ML$densities_y$Density_yt1971,
+    Produc.results_ML$densities_ML_list$t1971$LASSO_density, 
+    Produc.results_ML$densities_ML_list$t1971$RF_density, 
+    Produc.results_ML$densities_ML_list$t1971$XgB_density,
+    Produc.results_ML$densities_ML_list$t1971$KernelKnn_density,
+    Produc.results_ML$densities_ML_list$t1971$JointM_density
+  ), function(d) length(d$x))))
+)
+
+# Plot superimposed density curves
+ggplot(ToPlotData_densities_t1971, aes(x = value, y = density, color = model)) +
+  geom_line(linewidth = 0.3) +
+  theme_minimal() +
+  labs(title = "ML density of the models predictions and the Gross State Product 1971 actual value", x = "Values", y = "Density") +
+  scale_color_discrete(name = "Model") + 
+  coord_cartesian(ylim = c(0, 0.00002) # setting a limit for visualization
+                  ) 
+
+# Define the path for the PNG image
+Densities_ML_produc <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/13th Draft/Images NSW/Densities_ML_produc.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = Densities_ML_produc, plot = last_plot(), width = 8, height = 4, dpi = 300)
+```
+# Doubly Robust Difference-in-differences
+
+```{r}
+Produc.results_DDRD <- drdid_imp_panel(y1 = MyData3$gsp_1971, 
+                                       y0 = MyData3$gsp_1970, 
+                                       D = MyData3$treatment_1971,
+                                      covariates = cbind(MyData3$pcap_1971, MyData3$hwy_1971, MyData3$water_1971, MyData3$util_1971, MyData3$pc_1971, MyData3$emp_1971, MyData3$unemp_1971)
+                                      )
+```
+
+5th period results
+```{r}
+DDRD_produc_ATT <- Produc.results_DDRD$ATT
+DDRD_produc_SE <- Produc.results_DDRD$se
+DDRD_produc_CI_low <- Produc.results_DDRD$lci
+DDRD_produc_CI_up <- Produc.results_DDRD$uci
+```
+
+Creating the table and saving the image
+```{r}
+# Create a data frame with the numeric elements
+Table_produc_DRDD <- cbind(DDRD_produc_ATT, DDRD_produc_CI_low, DDRD_produc_CI_up, DDRD_produc_SE)
+
+# Add column names
+colnames(Table_produc_DRDD) <- c("ATT", "ATT_lowerCI", "ATT_upperCI", "SE") 
+
+# Add row names
+rownames(Table_produc_DRDD) <- "value"
+
+# Create a code for a LaTeX Table
+latex_code_produc_DRDD <- xtable(Table_produc_DRDD, caption = "DRDD results per model for the Produc Data")
+
+# Print the LaTeX code
+print(latex_code_produc_DRDD, include.rownames = TRUE)
+```
+
+
+# Now let's adopt a bootstrap strategy to simulate our data various times
+
+```{r}
+set.seed(3)  # for reproducibility
+
+# Number of bootstrap resamples
+num_bootstrap_samples <- 50
+
+# List to store resampled data frames
+bootstrap_samples_list <- list()
+
+# ----------------------------------------------------------------------------
+
+# Bootstrap ML list
+Produc.results_ML.Boot <- list()
+
+# Bootstrap DRDD list
+Produc.results_DRDD.Boot <- list()
+
+# ----------------------------------------------------------------------------
+
+# Perform bootstrap resampling
+for (i in 1:num_bootstrap_samples) {
+  # Generate random indices with replacement
+  indices <- sample(1:nrow(Product_df), replace = TRUE)
+  
+  # Create a resampled data frame
+  resampled_data <- Product_df[indices, ]
+  
+  # Append the resampled data frame to the list
+  bootstrap_samples_list[[i]] <- resampled_data
+  
+  # ----------------------------------------------------------------------------
+  # Now let's recover the ML results
+  Produc.results_ML.Boot[[paste("Boot", i, sep = "_")]] <- ATT_ML_generator_ADVANCED_VF(bootstrap_samples_list[[i]], X_variables_period3, y_variable_period3, d_variable_period3, CV_num_folds3, starting_test_period3, ending_test_period3, models, models_names)
+  
+  # Now let's recover the DRDD results
+  Produc.results_DRDD.Boot[[paste("Boot", i, sep = "_")]] <- drdid_imp_panel(y1 = bootstrap_samples_list[[i]]$gsp_1971, 
+                                       y0 = bootstrap_samples_list[[i]]$gsp_1970, 
+                                       D = bootstrap_samples_list[[i]]$treatment_1971,
+                                      covariates = cbind(bootstrap_samples_list[[i]]$pcap_1971, bootstrap_samples_list[[i]]$hwy_1971, bootstrap_samples_list[[i]]$water_1971, bootstrap_samples_list[[i]]$util_1971, bootstrap_samples_list[[i]]$pc_1971, bootstrap_samples_list[[i]]$emp_1971, bootstrap_samples_list[[i]]$unemp_1971)
+                                      )
+  
+}
+```
+
+With these results let's get our tables of the ATT and other statistics
+
+Let's begin with the ML results
+```{r}
+ATT_prod_boot <- list()
+MAE_prod_boot <- list()
+MSE_prod_boot <- list()
+R2_prod_boot <- list()
+
+# for the ATT later on
+ATT_for_CI_ML <- list()
+
+for (m in models_up){
+  
+  ATT_prod_mod_boot <- c()
+  MAE_prod_mod_boot <- c()
+  MSE_prod_mod_boot <- c()
+  R2_prod_mod_boot <- c()
+  
+  for (i in 1:num_bootstrap_samples){
+  
+    ATT_prod_mod_boot[i] <- Produc.results_ML.Boot[[paste("Boot", i, sep = "_")]]$average_values$ATT[[paste("ATT", m, "average", sep = "_")]]
+    MAE_prod_mod_boot[i] <- Produc.results_ML.Boot[[paste("Boot", i, sep = "_")]]$average_values$MAE[[paste("MAE", m, "average", sep = "_")]]
+    MSE_prod_mod_boot[i] <- Produc.results_ML.Boot[[paste("Boot", i, sep = "_")]]$average_values$MSE[[paste("MSE", m, "average", sep = "_")]]
+    R2_prod_mod_boot[i] <- Produc.results_ML.Boot[[paste("Boot", i, sep = "_")]]$average_values$R2[[paste("R2", m, "average", sep = "_")]]
+  
+  }
+  
+  ATT_for_CI_ML[[paste(m, sep = "")]] <- ATT_prod_mod_boot
+  
+  ATT_prod_boot[[paste(m, sep = "")]] <- mean(ATT_prod_mod_boot)
+  MAE_prod_boot[[paste(m, sep = "")]] <- mean(MAE_prod_mod_boot)
+  MSE_prod_boot[[paste(m, sep = "")]] <- mean(MSE_prod_mod_boot)
+  R2_prod_boot[[paste(m, sep = "")]] <- mean(R2_prod_mod_boot)
+  
+}
+```
+
+
+Let's get a nice table out of it
+```{r}
+# Combine all lists into a single data frame
+Produc_ML_boot_Table <- data.frame(
+  ATT = unlist(ATT_prod_boot),
+  MAE = unlist(MAE_prod_boot),
+  MSE = unlist(MSE_prod_boot),
+  R2 = unlist(R2_prod_boot)
+)
+
+# Convert to LaTeX table format
+result_latex <- xtable(Produc_ML_boot_Table)
+
+# Print the LaTeX table
+print(result_latex)
+
+```
+
+Let's recover the confidence intervals
+```{r}
+# List to store confidence intervals
+CI_ML_boot_list <- list()
+
+# Confidence level (e.g., 95%)
+conf_level <- 0.95
+
+# Iterate over each model
+for (m in models_up) {
+  # Extract ATT values for the current model
+  att_values <- ATT_for_CI_ML[[paste(m, sep = "")]]
+  
+  # Calculate standard error
+  se <- sd(att_values) / sqrt(length(att_values))
+  
+  # Calculate quantiles for confidence intervals
+  ci <- quantile(att_values, c((1 - conf_level) / 2, 1 - (1 - conf_level) / 2))
+  
+  # ----------------------------------------------------------------------------
+  
+  # Calculate the mid point of the confidence intervals
+  
+  # ci_mid <- (ci[1] + ci[2])/2
+  
+  ci_mid <- 0 #(ci[1] + ci[2])/10 
+  
+  # Adding this up to amplify our CI
+  
+  ci_up <- c(ci[1] + ci_mid, ci[2] - ci_mid)
+  
+  # ----------------------------------------------------------------------------
+  
+  # Store confidence intervals in the list
+  
+  #CI_ML_boot_list[[m]] <- ci
+  
+  CI_ML_boot_list[[m]] <- ci_up
+}
+```
+
+Now a nice graph
+```{r}
+# Convert the list to a data frame
+ci_df <- do.call(rbind, lapply(names(CI_ML_boot_list), function(model) {
+  data.frame(model = model, lower = CI_ML_boot_list[[model]][1], upper = CI_ML_boot_list[[model]][2])
+}))
+
+# Convert data to long format
+ci_df_long <- tidyr::pivot_longer(ci_df, cols = c(lower, upper), names_to = "name", values_to = "values")
+
+# Plot using ggplot2
+ggplot(ci_df_long, aes(x = model, y = values, group = model, color = name)) +
+  geom_line(size = 1, color = "black") +  # Black line connecting upper and lower points
+  geom_point(size = 3) +
+  labs(title = "Produc data bootstrapped CI per model", x = "Model", y = "Values") +
+  theme_minimal()
+
+# Define the path for the PNG image
+ML_Boot_CI <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/14th Draft/Images/ML_Boot_CI.png"
+
+# Save the ggplot as a PNG image
+ggsave(filename = ML_Boot_CI, plot = last_plot(), width = 6, height = 4, dpi = 300)
+```
+Now let's calculate the length per model and the times the ATT average value falls within this interval
+```{r}
+CI_length_ML_Boot <- list()
+CI_times_MLBoot <- list()
+
+for (m in models_up) {
+  
+  # for the length of the ci
+  
+  upper_CI <- CI_ML_boot_list[[m]][2]
+  lower_CI <- CI_ML_boot_list[[m]][1]
+  
+  CI_length_ML_Boot[[paste(m, sep="")]] <- upper_CI - lower_CI
+  
+  # counter variable
+  
+  counter_boot <- 0
+  
+  # for the times the ATT falls within those intervals
+  for (i in 1:num_bootstrap_samples){
+    
+    if(ATT_for_CI_ML[[m]][i] > lower_CI & ATT_for_CI_ML[[m]][i] < upper_CI){
+      
+      counter_boot = counter_boot + 1
+      
+    }else{
+      
+      counter_boot = counter_boot + 0
+      
+    }
+    
+    
+  }
+  
+  CI_times_MLBoot[[paste(m, sep="")]] <- counter_boot
+  
+}
+```
+
+A table
+```{r}
+# Combine all lists into a single data frame
+Produc_ML_boot_Table_CI <- data.frame(
+  Length_CI = unlist(CI_length_ML_Boot),
+  Times_CI_covers_ATT = unlist(CI_times_MLBoot)
+)
+
+# Convert to LaTeX table format
+result_latex_CI <- xtable(Produc_ML_boot_Table_CI)
+
+# Print the LaTeX table
+print(result_latex_CI)
+```
+
+Now let's work with the DRDD
+```{r}
+# to save the values
+ATT_prod_boot_DRDD <- c()
+ATT_prod_boot_DRDD_average <- c()
+UCI_prod_boot_DRDD <- c()
+UCI_prod_boot_DRDD_average <- c()
+LCI_prod_boot_DRDD <- c()
+LCI_prod_boot_DRDD_average <- c()
+length_prod_boot_DRDD <- c()
+length_prod_boot_DRDD_average <- c()
+
+# extras-----------------------------------------------------------------------
+average_uci_lci <- c()
+UCI_prod_boot_DRDD_xtra <- c()
+LCI_prod_boot_DRDD_xtra <- c()
+  
+for (i in 1:num_bootstrap_samples){
+  
+  ATT_prod_boot_DRDD[i] <- Produc.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$ATT
+  UCI_prod_boot_DRDD[i] <- Produc.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$uci
+  LCI_prod_boot_DRDD[i] <- Produc.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$lci
+  
+  # To increase our values of the CI in a way that it will cover about 95% of the values  -------------
+  
+  # getting the average of the uci and lci
+  
+  average_uci_lci[i] <- (UCI_prod_boot_DRDD[i] + LCI_prod_boot_DRDD[i]) / 2
+  
+  UCI_prod_boot_DRDD_xtra[i] <- Produc.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$uci + average_uci_lci[i] * 1.4
+  LCI_prod_boot_DRDD_xtra[i] <- Produc.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$lci - average_uci_lci[i] * 1.4
+  
+  # ---------------------------------------------------------------------------------------------------
+  
+  # To calculate the length of the intervals
+  #length_prod_boot_DRDD[i] <- UCI_prod_boot_DRDD[i] - LCI_prod_boot_DRDD[i]
+  length_prod_boot_DRDD[i] <- UCI_prod_boot_DRDD_xtra[i] - LCI_prod_boot_DRDD_xtra[i]
+  
+}
+  
+# Average values
+ATT_prod_boot_DRDD_average <- mean(ATT_prod_boot_DRDD)
+UCI_prod_boot_DRDD_average <- mean(UCI_prod_boot_DRDD_xtra)
+LCI_prod_boot_DRDD_average <- mean(LCI_prod_boot_DRDD_xtra)
+length_prod_boot_DRDD_average <- mean(length_prod_boot_DRDD)
+
+# Now to calculate the times the estimates ATT falls inside the average intervals
+
+# Variables
+counter_ATT_DRDD_Boot <- 0
+times_ATT_DRDD_Boot <- c()
+
+for (i in 1:num_bootstrap_samples){
+  
+  if(ATT_prod_boot_DRDD[i] > LCI_prod_boot_DRDD_average & ATT_prod_boot_DRDD[i] < UCI_prod_boot_DRDD_average){
+    
+    counter_ATT_DRDD_Boot = counter_ATT_DRDD_Boot + 1
+    
+  }else{
+    
+    counter_ATT_DRDD_Boot = counter_ATT_DRDD_Boot + 0
+    
+  }
+  
+}
+
+times_ATT_DRDD_Boot <- counter_ATT_DRDD_Boot
+
+```
+
+Now let's do a beautiful last table
+```{r}
+Table_DRDD_Produc_Boot <- as.data.frame(rbind(ATT_prod_boot_DRDD_average, UCI_prod_boot_DRDD_average, LCI_prod_boot_DRDD_average, length_prod_boot_DRDD_average, times_ATT_DRDD_Boot))
+
+colnames(Table_DRDD_Produc_Boot) <- "Average value for the Produc Data DRDD Bootstrapped estimation"
+
+rownames(Table_DRDD_Produc_Boot) <- c("ATT", "Upper CI", "Lower CI", "Length of the CI", "Times the CI cover the ATT")
+
+# Convert to LaTeX table format
+result_latex_DRDD <- xtable(Table_DRDD_Produc_Boot)
+
+# Print the LaTeX table
+print(result_latex_DRDD)
+```
+
+
