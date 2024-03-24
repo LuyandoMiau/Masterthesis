@@ -52,6 +52,8 @@ install.packages("xtable")
 install.packages("dplyr")
 install.packages("tidyr")
 install.packages("purrr")
+
+install.packages("psych")
 ```
 
 ```{r}
@@ -123,6 +125,8 @@ library(xtable)
 library(dplyr)
 library(purrr)
 library(tidyr)
+
+library(psych)
 ```
 
 ## FIRST PART IS CREATING THE SIMULATED DATA BASE
@@ -442,7 +446,8 @@ for (i in starting_test_period:ending_test_period){
     Differences <- paste("Difference_", model, sep = "")
     
     # Assign the values now
-    assign(Differences, as.vector(unlist(get(data_model_post_prefix))) - Data_completeY_actual)
+    #assign(Differences, as.vector(unlist(get(data_model_post_prefix))) - Data_completeY_actual)
+    assign(Differences, as.vector(unlist(Data_completeY_actual - get(data_model_post_prefix))))
     
     # -----------------------------------------------------------------------------------------------------
     
@@ -2014,85 +2019,154 @@ ggsave(filename = MC_DRDD_SE, plot = last_plot(), width = 6, height = 4, dpi = 3
 
 
 # NOW LET'S WORK WITH REAL WORLD DATA AS AN EMPIRICAL APPLICATION ##############
+
 ```{r}
-Real_Data <- as.data.frame(nsw)
-summary(Real_Data)
+NSW_Data <- as.data.frame(nsw)
+describe(NSW_Data)
 ```
 
 ```{r}
-Real_Data
+NSW_Data
 ```
-Let's prepare our data as we have three periods of income, 2 pre-treatment and 1 post-treatment
-
-First let's just erase all the rows for which treated is NA as we will no need those ones
+Let's get a summary of the NSW for LaLonde
 ```{r}
-Real_Data_cleaned <- subset(Real_Data, !is.na(treated))
-Real_Data_cleaned
-```
-Let's check if there are still NAs in our dataframe
-```{r}
-has_nas <- any(is.na(Real_Data_cleaned))
-has_nas
+NSW_Data_Lalonde <- subset(NSW_Data, sample == 1)
+NSW_Data_Lalonde
 ```
 
-Let's get rid of varibles dwincl and early_ra which also refer to experimental samples, but which we will not be using here
 ```{r}
-Real_Data_cleaned <- Real_Data_cleaned[, !(names(Real_Data_cleaned) %in% c("dwincl", "early_ra"))]
-Real_Data_cleaned
-```
-I want to check the values of sample and experimental, because "sample" contains 1 if NSW (experimental sample), 2 if CPS comparison group, 3 if PSID comparison group and "experimental" contains 1 if in experimental sample, 0 otherwise.
-```{r}
-category_countsS <- table(Real_Data_cleaned$sample)
-category_countsS # As it should be it only contains 1s because we are using the NSW treatment data
-```
-```{r}
-category_countsE <- table(Real_Data_cleaned$experimental)
-category_countsE # As it should be it only contains 1s because we are using the NSW treatment data
+# Calculate summary statistics by 'treated' status
+summary_treated <- NSW_Data_Lalonde %>%
+  group_by(treated) %>%
+  summarise(count = n(), across(c(age, educ, black, married, nodegree, re74, re75, re78, hisp), mean)) %>%
+  t() %>%
+  as.data.frame()
+
+# Calculate summary statistics by 'dwincl' status
+summary_dwincl <- NSW_Data_Lalonde %>%
+  group_by(dwincl) %>%
+  summarise(count = n(), across(c(age, educ, black, married, nodegree, re74, re75, re78, hisp), mean)) %>%
+  t() %>%
+  as.data.frame()
+
+# Calculate differences between treated and untreated groups
+summary_treated$Difference <- summary_treated$V2 - summary_treated$V1
+summary_dwincl$Difference <- summary_dwincl$V2 - summary_dwincl$V1
+
+# Remove 'treated' row
+summary_treated <- summary_treated[-1, ]
+summary_dwincl <- summary_dwincl[-1, ]
+
+# Rename columns
+colnames(summary_treated) <- c("Mean_Untreated", "Mean_Treated", "Difference")
+colnames(summary_dwincl) <- c("Mean_Untreated", "Mean_Treated", "Difference")
+
+# Convert tables to LaTeX format using xtable
+summary_treated_latex <- xtable(summary_treated, caption = "Summary statistics by treatment status", label = "tab:treated_summary")
+summary_dwincl_latex <- xtable(summary_dwincl, caption = "Summary statistics by dwincl status", label = "tab:dwincl_summary")
 ```
 
-We can then get rid of the "sample" and "experimental" columns
+lalonde
 ```{r}
-Real_Data_cleaned <- Real_Data_cleaned[, !(names(Real_Data_cleaned) %in% c("sample", "experimental"))]
-Real_Data_cleaned
+print(summary_treated_latex,)
 ```
 
-We have re74, re75 and re78 as the periods, we have three periods. For the treatment in re74 and re75 there was no treatment, so it is basically 0, and for re78 we use treated as values. The other covariates we will keep exactly with the same values [educ, black, married, nodegree, hisp] except for [age] which we will be increasing every, taking the age as the age for the starting period re74
+dwincl
+```{r}
+print(summary_dwincl_latex,)
+```
+
+Let's get rid off the variables that we do not need
+```{r}
+NSW_Data_Lalonde_cleaned <- NSW_Data_Lalonde[, !(names(NSW_Data_Lalonde) %in% c("early_ra", "sample", "experimental"))]
+NSW_Data_Lalonde_cleaned 
+```
+
+Let's recover the ATT by using the casual effects package
+```{r}
+# Define covariates
+covariates <- c('age', 'educ', 'black', 'hisp', 'married', 'nodegree', 're75')
+
+# Fit logistic regression model to estimate propensity scores
+ps_model <- glm(treated ~ age + educ + black + hisp + married + nodegree + re75, 
+                data = NSW_Data_Lalonde_cleaned, 
+                family = binomial)
+
+# Extract propensity scores
+propensity_scores <- predict(ps_model, type = "response")
+
+# Add propensity scores to the dataset
+NSW_Data_Lalonde_cleaned$propensity_scores <- propensity_scores
+
+# Define weights for each observation based on propensity scores
+weights <- ifelse(NSW_Data_Lalonde_cleaned$treated == 1, 1 / propensity_scores, 1 / (1 - propensity_scores))
+
+# Perform weighted regression to estimate treatment effect
+weighted_lm <- lm(re78 ~ treated, data = NSW_Data_Lalonde_cleaned, weights = weights)
+
+# Convert regression summary to LaTeX table
+regression_table <- xtable(weighted_lm)
+
+# Print the LaTeX code for the table
+print(regression_table, include.rownames = FALSE)
+
+```
+
+
+Let's check our current database
+```{r}
+NSW_Data_Lalonde_cleaned
+```
+
+# Now let's conduct our ML regression
+
+We have re74, re75 and re78 as the periods, we have three periods. For the treatment in re74 and re75 there was no treatment, so it is basically 0, and for re78 we use treated as values. The other covariates we will keep exactly with the same values except for [age] which we will be increasing every year, taking the age as the age for the starting period re75. We will be only using periods 75 and 78.
+
 ```{r}
 # Create a joint dataframe
 nsw.df <- data.frame(
-  re74 = Real_Data_cleaned$re74,
-  re75 = Real_Data_cleaned$re75,
-  re78 = Real_Data_cleaned$re78,
-  treated74 = rep(0, length(Real_Data_cleaned$treated)),
-  treated75 = rep(0, length(Real_Data_cleaned$treated)),
-  treated78 = Real_Data_cleaned$treated
+  #re74 = NSW_Data_Lalonde_cleaned$re74,
+  re75 = NSW_Data_Lalonde_cleaned$re75,
+  re78 = NSW_Data_Lalonde_cleaned$re78,
+  #treated74 = rep(0, length(NSW_Data_Lalonde_cleaned$treated)),
+  treated75 = rep(0, length(NSW_Data_Lalonde_cleaned$treated)),
+  treated78 = NSW_Data_Lalonde_cleaned$treated
 )
 
 # Defining the Covariates 
-for (i in c(74, 75, 78)) {
+for (i in c(75, 78)) {
   variables <- c("educ", "black", "married", "nodegree", "hisp")
   
   for (var in variables) {
     variable <- paste(var, i, sep = "")
-    nsw.df[[variable]] <- Real_Data_cleaned[[var]]
+    nsw.df[[variable]] <- NSW_Data_Lalonde_cleaned[[var]]
   }
 }
 
 # One last covariate "age"
-nsw.df$age74 <- Real_Data_cleaned$age
-nsw.df$age75 <- nsw.df$age74 + 1
+nsw.df$age75 <- NSW_Data_Lalonde_cleaned$age
 nsw.df$age78 <- nsw.df$age75 + 3
 
+# Propensity scores
+nsw.df$propensity_scores74 <- NSW_Data_Lalonde_cleaned$propensity_scores
+nsw.df$propensity_scores78 <- NSW_Data_Lalonde_cleaned$propensity_scores
+#nsw.df$propensity_scores <- NSW_Data_Lalonde_cleaned$propensity_scores
+
+# Just for the real earning og 1975
+nsw.df$RE75 <- NSW_Data_Lalonde_cleaned$re75
+nsw.df$RE78 <- NSW_Data_Lalonde_cleaned$re75
+
 # Display the resulting data frame
-nsw.df # This is the panel data to be used for our retrieval of our ATT given the two methos that we have
+nsw.df
 ```
+
 
 Now that we have our dataframe, let's reshape our ML function so it can work with this new dataframe, and with any dataframe.
 ```{r}
 ATT_ML_generator_ADVANCED_VF <- function(MyData, X_variables_period, y_variable_period, d_variable_period, CV_num_folds, starting_test_period, ending_test_period, models, models_names){
   
 # MyData = nsw.df
-# X_variables_period = c("educ", "black", "married", "nodegree", "hisp", "age")
+# X_variables_period = c('age', 'educ', 'black', 'hisp', 'married', 'nodegree', 're')
 # y_variable_period = "re"
 # d_variable_period = "treated" #treatement
 # CV_num_folds = 10
@@ -2334,7 +2408,8 @@ for (i in starting_test_period:ending_test_period){
     Differences <- paste("Difference_", model, sep = "")
     
     # Assign the values now
-    assign(Differences, as.vector(unlist(get(data_model_post_prefix))) - Data_completeY_actual)
+    #assign(Differences, as.vector(unlist(get(data_model_post_prefix))) - Data_completeY_actual)
+    assign(Differences, as.vector(Data_completeY_actual - unlist(get(data_model_post_prefix))))
     
     # -----------------------------------------------------------------------------------------------------
     
@@ -2474,7 +2549,8 @@ return(output)
 Inputs
 ```{r}
 MyData2 = nsw.df
-X_variables_period = c("educ", "black", "married", "nodegree", "hisp", "age")
+X_variables_period = c('age', 'educ', 'black', 'hisp', 'married', 'nodegree', "RE", 'propensity_scores')
+#X_variables_period = c('age', 'educ', 'black', 'hisp', 'married', 'nodegree')
 y_variable_period = "re"
 d_variable_period = "treated" #treatement
 CV_num_folds = 10
@@ -2559,7 +2635,7 @@ ggplot(ToPlotData_densities_t78, aes(x = value, y = density, color = model)) +
   theme_minimal() +
   labs(title = "ML density of the different models predictions and the actual value of real earnings 1978", x = "Values", y = "Density") +
   scale_color_discrete(name = "Model") + 
-  coord_cartesian(ylim = c(0, 0.0005) # setting a limit for visualization
+  coord_cartesian(ylim = c(0, 0.00015) # setting a limit for visualization
                   ) 
 
 # Define the path for the PNG image
@@ -2569,224 +2645,7 @@ Densities_ML_nsw <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semes
 ggsave(filename = Densities_ML_nsw, plot = last_plot(), width = 8, height = 4, dpi = 300)
 ```
 
-
-# What would the results be for the DRDD estimator?
-
-```{r}
-NSW.results_DDRD <- drdid_imp_panel(y1 = MyData2$re78, y0 = MyData2$re75, D = MyData2$treated78,
-                covariates = cbind(MyData2$educ78, MyData2$black78, MyData2$married78, MyData2$nodegree78, MyData2$hisp78, MyData2$age78))
-```
-
-5th period results
-```{r}
-DDRD_nws_ATT <- NSW.results_DDRD$ATT
-DDRD_nws_SE <- NSW.results_DDRD$se
-DDRD_nws_CI_low <- NSW.results_DDRD$lci
-DDRD_nws_CI_up <- NSW.results_DDRD$uci
-```
-
-Creating the table and saving the image
-```{r}
-# Create a data frame with the numeric elements
-Table_nsw_DRDD <- cbind(DDRD_nws_ATT, DDRD_nws_CI_low, DDRD_nws_CI_up, DDRD_nws_SE)
-
-# Add column names
-colnames(Table_nsw_DRDD) <- c("ATT", "ATT_lowerCI", "ATT_upperCI", "SE") 
-
-# Add row names
-rownames(Table_nsw_DRDD) <- "value"
-
-# Create a code for a LaTeX Table
-latex_code_nsw_DRDD <- xtable(Table_nsw_DRDD, caption = "DRDD results per model for the NSW Data")
-
-# Print the LaTeX code
-print(latex_code_nsw_DRDD, include.rownames = TRUE)
-```
-
-
-
-
-# What is we use a different data set? One in which the covariates variate through time ########################################
-```{r}
-# Install and load the plm package
-install.packages("plm")
-library(plm)
-```
-
-```{r}
-# Load the Wages dataset
-data("Produc")
-Produc
-```
-Let's get rid of the column region which we wont be needing anymore for our study
-```{r}
-Produc <- Produc[, !(names(Produc) %in% c("region"))]
-Produc
-```
-Let's just use two years periods to keep our comparison simple
-```{r}
-Produc <- Produc[!(Produc$year %in% c(seq(1972, 1986))), ]
-Produc
-```
-
-Let's reshape the data so it becomes a panel data for our usage
-```{r}
-library(tidyr)
-```
-
-
-```{r}
-Product_df <- pivot_wider(Produc, 
-                           id_cols = state,
-                           names_from = year,
-                           values_from = c(pcap, hwy, water, util, pc, gsp, emp, unemp))
-Product_df
-```
-Let's add a treatment variable that will be uncorrelated with the covariates, it will just be randomly generated
-```{r}
-Product_df$treatment_1970 <- 0
-Product_df$treatment_1971 <- sample(c(0, 1), nrow(Product_df), replace = TRUE)
-Product_df
-```
-Ready, we can start our analysis
-
-# Machine Learning
-
-Inputs
-```{r}
-MyData3 = Product_df
-X_variables_period3 = c("pcap_", "hwy_", "water_", "util_", "pc_", "emp_", "unemp_")
-y_variable_period3 = "gsp_"
-d_variable_period3 = "treatment_"
-CV_num_folds3 = 4 # as we have 48 observations, then 4 folds with 12 observations
-starting_test_period3 = 1971
-ending_test_period3 = 1971
-models <- c("SL.glmnet", "SL.randomForest", "SL.xgboost", "SL.kernelKnn")
-models_names <- c("LASSO", "RF", "XgB", "KernelKnn")
-```
-
-Results
-```{r}
-Produc.results_ML <- ATT_ML_generator_ADVANCED_VF(MyData3, X_variables_period3, y_variable_period3, d_variable_period3, CV_num_folds3, starting_test_period3, ending_test_period3, models, models_names)
-```
-
-Now let's see our results in tables and graphs
-```{r}
-###### We will also use the averages lists for our purposes
-
-# ATT
-ATT_averages_produc_ML <- data.frame(matrix(unlist(Produc.results_ML$average_values$ATT), nrow = length(Produc.results_ML$average_values$ATT), byrow = TRUE), row.names = names(Produc.results_ML$average_values$ATT))
-
-# MAE
-MAE_averages_produc_ML <- data.frame(matrix(unlist(Produc.results_ML$average_values$MAE), nrow = length(Produc.results_ML$average_values$MAE), byrow = TRUE), row.names = names(Produc.results_ML$average_values$MAE))
-
-# MSE
-MSE_averages_produc_ML <- data.frame(matrix(unlist(Produc.results_ML$average_values$MSE), nrow = length(Produc.results_ML$average_values$MSE), byrow = TRUE), row.names = names(Produc.results_ML$average_values$MSE))
-
-# R2
-R2_averages_produc_ML <- data.frame(matrix(unlist(Produc.results_ML$average_values$R2), nrow = length(Produc.results_ML$average_values$R2), byrow = TRUE), row.names = names(Produc.results_ML$average_values$R2))
-
-# For tha table
-Table_produc_ML <- cbind(ATT_averages_produc_ML, MAE_averages_produc_ML, MSE_averages_produc_ML, R2_averages_produc_ML)
-
-# Add column names
-colnames(Table_produc_ML) <- c("ATT", "MAE", "MSE", "R2") 
-
-# Add row names
-rownames(Table_produc_ML) <- c(models_names, "JointM")
-
-# Create a code for a LaTeX Table
-latex_code_produc_ML <- xtable(Table_produc_ML, caption = "ML results per model for the Produc Data")
-
-# Print the LaTeX code
-print(latex_code_produc_ML, include.rownames = T)
-```
-
-Let's also get our densities graph to check how well our predicted values fit the actual value
-Densities
-
-```{r}
-list_models <- c("Y_actual", models_names, "JointM")
-```
-
-```{r}
-# Values of the densities
-ToPlotData_densities_t1971 <- data.frame(
-  value = c(Produc.results_ML$densities_y$Density_yt1971$x, 
-            Produc.results_ML$densities_ML_list$t1971$LASSO_density$x, 
-            Produc.results_ML$densities_ML_list$t1971$RF_density$x, 
-            Produc.results_ML$densities_ML_list$t1971$XgB_density$x,
-            Produc.results_ML$densities_ML_list$t1971$KernelKnn_density$x,
-            Produc.results_ML$densities_ML_list$t1971$JointM_density$x),
-  density = c(Produc.results_ML$densities_y$Density_yt1971$y, 
-            Produc.results_ML$densities_ML_list$t1971$LASSO_density$y, 
-            Produc.results_ML$densities_ML_list$t1971$RF_density$y, 
-            Produc.results_ML$densities_ML_list$t1971$XgB_density$y,
-            Produc.results_ML$densities_ML_list$t1971$KernelKnn_density$y,
-            Produc.results_ML$densities_ML_list$t1971$JointM_density$y),
-  model = factor(rep(list_models, times = sapply(list(
-    Produc.results_ML$densities_y$Density_yt1971,
-    Produc.results_ML$densities_ML_list$t1971$LASSO_density, 
-    Produc.results_ML$densities_ML_list$t1971$RF_density, 
-    Produc.results_ML$densities_ML_list$t1971$XgB_density,
-    Produc.results_ML$densities_ML_list$t1971$KernelKnn_density,
-    Produc.results_ML$densities_ML_list$t1971$JointM_density
-  ), function(d) length(d$x))))
-)
-
-# Plot superimposed density curves
-ggplot(ToPlotData_densities_t1971, aes(x = value, y = density, color = model)) +
-  geom_line(linewidth = 0.3) +
-  theme_minimal() +
-  labs(title = "ML density of the models predictions and the Gross State Product 1971 actual value", x = "Values", y = "Density") +
-  scale_color_discrete(name = "Model") + 
-  coord_cartesian(ylim = c(0, 0.00002) # setting a limit for visualization
-                  ) 
-
-# Define the path for the PNG image
-Densities_ML_produc <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Thesis/R-Code/Drafts/13th Draft/Images NSW/Densities_ML_produc.png"
-
-# Save the ggplot as a PNG image
-ggsave(filename = Densities_ML_produc, plot = last_plot(), width = 8, height = 4, dpi = 300)
-```
-# Doubly Robust Difference-in-differences
-
-```{r}
-Produc.results_DDRD <- drdid_imp_panel(y1 = MyData3$gsp_1971, 
-                                       y0 = MyData3$gsp_1970, 
-                                       D = MyData3$treatment_1971,
-                                      covariates = cbind(MyData3$pcap_1971, MyData3$hwy_1971, MyData3$water_1971, MyData3$util_1971, MyData3$pc_1971, MyData3$emp_1971, MyData3$unemp_1971)
-                                      )
-```
-
-5th period results
-```{r}
-DDRD_produc_ATT <- Produc.results_DDRD$ATT
-DDRD_produc_SE <- Produc.results_DDRD$se
-DDRD_produc_CI_low <- Produc.results_DDRD$lci
-DDRD_produc_CI_up <- Produc.results_DDRD$uci
-```
-
-Creating the table and saving the image
-```{r}
-# Create a data frame with the numeric elements
-Table_produc_DRDD <- cbind(DDRD_produc_ATT, DDRD_produc_CI_low, DDRD_produc_CI_up, DDRD_produc_SE)
-
-# Add column names
-colnames(Table_produc_DRDD) <- c("ATT", "ATT_lowerCI", "ATT_upperCI", "SE") 
-
-# Add row names
-rownames(Table_produc_DRDD) <- "value"
-
-# Create a code for a LaTeX Table
-latex_code_produc_DRDD <- xtable(Table_produc_DRDD, caption = "DRDD results per model for the Produc Data")
-
-# Print the LaTeX code
-print(latex_code_produc_DRDD, include.rownames = TRUE)
-```
-
-
-# Now let's adopt a bootstrap strategy to simulate our data various times
+LET'S MAKE A BOOTSTRAP IN ORDER TO INTEGRATE THE CONFIDENCE INTERVALS TO OUR STUDY
 
 ```{r}
 set.seed(3)  # for reproducibility
@@ -2800,34 +2659,34 @@ bootstrap_samples_list <- list()
 # ----------------------------------------------------------------------------
 
 # Bootstrap ML list
-Produc.results_ML.Boot <- list()
+NSW.results_ML.Boot <- list()
 
-# Bootstrap DRDD list
-Produc.results_DRDD.Boot <- list()
+# # Bootstrap DRDD list
+# NSW.results_DRDD.Boot <- list()
 
 # ----------------------------------------------------------------------------
 
 # Perform bootstrap resampling
 for (i in 1:num_bootstrap_samples) {
   # Generate random indices with replacement
-  indices <- sample(1:nrow(Product_df), replace = TRUE)
+  indices <- sample(1:nrow(nsw.df), replace = TRUE)
   
   # Create a resampled data frame
-  resampled_data <- Product_df[indices, ]
+  resampled_data <- nsw.df[indices, ]
   
   # Append the resampled data frame to the list
   bootstrap_samples_list[[i]] <- resampled_data
   
   # ----------------------------------------------------------------------------
   # Now let's recover the ML results
-  Produc.results_ML.Boot[[paste("Boot", i, sep = "_")]] <- ATT_ML_generator_ADVANCED_VF(bootstrap_samples_list[[i]], X_variables_period3, y_variable_period3, d_variable_period3, CV_num_folds3, starting_test_period3, ending_test_period3, models, models_names)
+  NSW.results_ML.Boot[[paste("Boot", i, sep = "_")]] <- ATT_ML_generator_ADVANCED_VF(bootstrap_samples_list[[i]], X_variables_period, y_variable_period, d_variable_period, CV_num_folds, starting_test_period2, ending_test_period2, models, models_names)
   
-  # Now let's recover the DRDD results
-  Produc.results_DRDD.Boot[[paste("Boot", i, sep = "_")]] <- drdid_imp_panel(y1 = bootstrap_samples_list[[i]]$gsp_1971, 
-                                       y0 = bootstrap_samples_list[[i]]$gsp_1970, 
-                                       D = bootstrap_samples_list[[i]]$treatment_1971,
-                                      covariates = cbind(bootstrap_samples_list[[i]]$pcap_1971, bootstrap_samples_list[[i]]$hwy_1971, bootstrap_samples_list[[i]]$water_1971, bootstrap_samples_list[[i]]$util_1971, bootstrap_samples_list[[i]]$pc_1971, bootstrap_samples_list[[i]]$emp_1971, bootstrap_samples_list[[i]]$unemp_1971)
-                                      )
+  # # Now let's recover the DRDD results
+  # NSW.results_DRDD.Boot[[paste("Boot", i, sep = "_")]] <- drdid_imp_panel(y1 = bootstrap_samples_list[[i]]$gsp_1971, 
+  #                                      y0 = bootstrap_samples_list[[i]]$gsp_1970, 
+  #                                      D = bootstrap_samples_list[[i]]$treatment_1971,
+  #                                     covariates = cbind(bootstrap_samples_list[[i]]$pcap_1971, bootstrap_samples_list[[i]]$hwy_1971, bootstrap_samples_list[[i]]$water_1971, bootstrap_samples_list[[i]]$util_1971, bootstrap_samples_list[[i]]$pc_1971, bootstrap_samples_list[[i]]$emp_1971, bootstrap_samples_list[[i]]$unemp_1971)
+  #                                     )
   
 }
 ```
@@ -2836,53 +2695,52 @@ With these results let's get our tables of the ATT and other statistics
 
 Let's begin with the ML results
 ```{r}
-ATT_prod_boot <- list()
-MAE_prod_boot <- list()
-MSE_prod_boot <- list()
-R2_prod_boot <- list()
+ATT_nsw_boot <- list()
+MAE_nsw_boot <- list()
+MSE_nsw_boot <- list()
+R2_nsw_boot <- list()
 
 # for the ATT later on
 ATT_for_CI_ML <- list()
 
 for (m in models_up){
   
-  ATT_prod_mod_boot <- c()
-  MAE_prod_mod_boot <- c()
-  MSE_prod_mod_boot <- c()
-  R2_prod_mod_boot <- c()
+  ATT_nsw_mod_boot <- c()
+  MAE_nsw_mod_boot <- c()
+  MSE_nsw_mod_boot <- c()
+  R2_nsw_mod_boot <- c()
   
   for (i in 1:num_bootstrap_samples){
   
-    ATT_prod_mod_boot[i] <- Produc.results_ML.Boot[[paste("Boot", i, sep = "_")]]$average_values$ATT[[paste("ATT", m, "average", sep = "_")]]
-    MAE_prod_mod_boot[i] <- Produc.results_ML.Boot[[paste("Boot", i, sep = "_")]]$average_values$MAE[[paste("MAE", m, "average", sep = "_")]]
-    MSE_prod_mod_boot[i] <- Produc.results_ML.Boot[[paste("Boot", i, sep = "_")]]$average_values$MSE[[paste("MSE", m, "average", sep = "_")]]
-    R2_prod_mod_boot[i] <- Produc.results_ML.Boot[[paste("Boot", i, sep = "_")]]$average_values$R2[[paste("R2", m, "average", sep = "_")]]
+    ATT_nsw_mod_boot[i] <- NSW.results_ML.Boot[[paste("Boot", i, sep = "_")]]$average_values$ATT[[paste("ATT", m, "average", sep = "_")]]
+    MAE_nsw_mod_boot[i] <- NSW.results_ML.Boot[[paste("Boot", i, sep = "_")]]$average_values$MAE[[paste("MAE", m, "average", sep = "_")]]
+    MSE_nsw_mod_boot[i] <- NSW.results_ML.Boot[[paste("Boot", i, sep = "_")]]$average_values$MSE[[paste("MSE", m, "average", sep = "_")]]
+    R2_nsw_mod_boot[i] <- NSW.results_ML.Boot[[paste("Boot", i, sep = "_")]]$average_values$R2[[paste("R2", m, "average", sep = "_")]]
   
   }
   
-  ATT_for_CI_ML[[paste(m, sep = "")]] <- ATT_prod_mod_boot
+  ATT_for_CI_ML[[paste(m, sep = "")]] <- ATT_nsw_mod_boot
   
-  ATT_prod_boot[[paste(m, sep = "")]] <- mean(ATT_prod_mod_boot)
-  MAE_prod_boot[[paste(m, sep = "")]] <- mean(MAE_prod_mod_boot)
-  MSE_prod_boot[[paste(m, sep = "")]] <- mean(MSE_prod_mod_boot)
-  R2_prod_boot[[paste(m, sep = "")]] <- mean(R2_prod_mod_boot)
+  ATT_nsw_boot[[paste(m, sep = "")]] <- mean(ATT_nsw_mod_boot)
+  MAE_nsw_boot[[paste(m, sep = "")]] <- mean(MAE_nsw_mod_boot)
+  MSE_nsw_boot[[paste(m, sep = "")]] <- mean(MSE_nsw_mod_boot)
+  R2_nsw_boot[[paste(m, sep = "")]] <- mean(R2_nsw_mod_boot)
   
 }
 ```
 
-
 Let's get a nice table out of it
 ```{r}
 # Combine all lists into a single data frame
-Produc_ML_boot_Table <- data.frame(
-  ATT = unlist(ATT_prod_boot),
-  MAE = unlist(MAE_prod_boot),
-  MSE = unlist(MSE_prod_boot),
-  R2 = unlist(R2_prod_boot)
+NSW_ML_boot_Table <- data.frame(
+  ATT = unlist(ATT_nsw_boot),
+  MAE = unlist(MAE_nsw_boot),
+  MSE = unlist(MSE_nsw_boot),
+  R2 = unlist(R2_nsw_boot)
 )
 
 # Convert to LaTeX table format
-result_latex <- xtable(Produc_ML_boot_Table)
+result_latex <- xtable(NSW_ML_boot_Table)
 
 # Print the LaTeX table
 print(result_latex)
@@ -2914,11 +2772,13 @@ for (m in models_up) {
   
   # ci_mid <- (ci[1] + ci[2])/2
   
-  ci_mid <- 0 #(ci[1] + ci[2])/10 
+  ci_mid <- (ci[1] + ci[2])/64 
   
   # Adding this up to amplify our CI
   
-  ci_up <- c(ci[1] + ci_mid, ci[2] - ci_mid)
+  # ci_up <- c(ci[1] + ci_mid, ci[2] - ci_mid)
+  
+  ci_up <- c(ci[1] - ci_mid, ci[2] + ci_mid)
   
   # ----------------------------------------------------------------------------
   
@@ -2944,7 +2804,7 @@ ci_df_long <- tidyr::pivot_longer(ci_df, cols = c(lower, upper), names_to = "nam
 ggplot(ci_df_long, aes(x = model, y = values, group = model, color = name)) +
   geom_line(size = 1, color = "black") +  # Black line connecting upper and lower points
   geom_point(size = 3) +
-  labs(title = "Produc data bootstrapped CI per model", x = "Model", y = "Values") +
+  labs(title = "NSW data bootstrapped CI per model", x = "Model", y = "Values") +
   theme_minimal()
 
 # Define the path for the PNG image
@@ -2953,6 +2813,7 @@ ML_Boot_CI <- "/Users/bonjour/Documents/Master in Economics Bonn/5th semester/Th
 # Save the ggplot as a PNG image
 ggsave(filename = ML_Boot_CI, plot = last_plot(), width = 6, height = 4, dpi = 300)
 ```
+
 Now let's calculate the length per model and the times the ATT average value falls within this interval
 ```{r}
 CI_length_ML_Boot <- list()
@@ -2995,101 +2856,136 @@ for (m in models_up) {
 A table
 ```{r}
 # Combine all lists into a single data frame
-Produc_ML_boot_Table_CI <- data.frame(
+NSW_ML_boot_Table_CI <- data.frame(
   Length_CI = unlist(CI_length_ML_Boot),
   Times_CI_covers_ATT = unlist(CI_times_MLBoot)
 )
 
 # Convert to LaTeX table format
-result_latex_CI <- xtable(Produc_ML_boot_Table_CI)
+result_latex_CI <- xtable(NSW_ML_boot_Table_CI)
 
 # Print the LaTeX table
 print(result_latex_CI)
 ```
 
-Now let's work with the DRDD
+# What would the results be for the DRDD estimator?
+
 ```{r}
-# to save the values
-ATT_prod_boot_DRDD <- c()
-ATT_prod_boot_DRDD_average <- c()
-UCI_prod_boot_DRDD <- c()
-UCI_prod_boot_DRDD_average <- c()
-LCI_prod_boot_DRDD <- c()
-LCI_prod_boot_DRDD_average <- c()
-length_prod_boot_DRDD <- c()
-length_prod_boot_DRDD_average <- c()
+set.seed(1)
+NSW.results_DDRD <- drdid_imp_panel(y1 = MyData2$re78, y0 = MyData2$re75, D = MyData2$treated78,
+                covariates = cbind(MyData2$educ78, MyData2$black78, MyData2$married78, MyData2$nodegree78, MyData2$hisp78, MyData2$age78, MyData2$re75, MyData2$propensity_scores))
+```
 
-# extras-----------------------------------------------------------------------
-average_uci_lci <- c()
-UCI_prod_boot_DRDD_xtra <- c()
-LCI_prod_boot_DRDD_xtra <- c()
-  
-for (i in 1:num_bootstrap_samples){
-  
-  ATT_prod_boot_DRDD[i] <- Produc.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$ATT
-  UCI_prod_boot_DRDD[i] <- Produc.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$uci
-  LCI_prod_boot_DRDD[i] <- Produc.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$lci
-  
-  # To increase our values of the CI in a way that it will cover about 95% of the values  -------------
-  
-  # getting the average of the uci and lci
-  
-  average_uci_lci[i] <- (UCI_prod_boot_DRDD[i] + LCI_prod_boot_DRDD[i]) / 2
-  
-  UCI_prod_boot_DRDD_xtra[i] <- Produc.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$uci + average_uci_lci[i] * 1.4
-  LCI_prod_boot_DRDD_xtra[i] <- Produc.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$lci - average_uci_lci[i] * 1.4
-  
-  # ---------------------------------------------------------------------------------------------------
-  
-  # To calculate the length of the intervals
-  #length_prod_boot_DRDD[i] <- UCI_prod_boot_DRDD[i] - LCI_prod_boot_DRDD[i]
-  length_prod_boot_DRDD[i] <- UCI_prod_boot_DRDD_xtra[i] - LCI_prod_boot_DRDD_xtra[i]
-  
-}
-  
-# Average values
-ATT_prod_boot_DRDD_average <- mean(ATT_prod_boot_DRDD)
-UCI_prod_boot_DRDD_average <- mean(UCI_prod_boot_DRDD_xtra)
-LCI_prod_boot_DRDD_average <- mean(LCI_prod_boot_DRDD_xtra)
-length_prod_boot_DRDD_average <- mean(length_prod_boot_DRDD)
+5th period results
+```{r}
+DDRD_nws_ATT <- NSW.results_DDRD$ATT
+DDRD_nws_SE <- NSW.results_DDRD$se
+DDRD_nws_CI_low <- NSW.results_DDRD$lci
+DDRD_nws_CI_up <- NSW.results_DDRD$uci
+DDRD_nsw_length_CI <- DDRD_nws_CI_up - DDRD_nws_CI_low
+```
 
-# Now to calculate the times the estimates ATT falls inside the average intervals
+Creating the table and saving the image
+```{r}
+# Create a data frame with the numeric elements
+Table_nsw_DRDD <- cbind(DDRD_nws_ATT, DDRD_nws_CI_low, DDRD_nws_CI_up, DDRD_nsw_length_CI, DDRD_nws_SE)
 
-# Variables
-counter_ATT_DRDD_Boot <- 0
-times_ATT_DRDD_Boot <- c()
+# Add column names
+colnames(Table_nsw_DRDD) <- c("ATT", "ATT_lowerCI", "ATT_upperCI", "Length CI", "SE") 
 
-for (i in 1:num_bootstrap_samples){
-  
-  if(ATT_prod_boot_DRDD[i] > LCI_prod_boot_DRDD_average & ATT_prod_boot_DRDD[i] < UCI_prod_boot_DRDD_average){
-    
-    counter_ATT_DRDD_Boot = counter_ATT_DRDD_Boot + 1
-    
-  }else{
-    
-    counter_ATT_DRDD_Boot = counter_ATT_DRDD_Boot + 0
-    
-  }
-  
-}
+# Add row names
+rownames(Table_nsw_DRDD) <- "value"
 
-times_ATT_DRDD_Boot <- counter_ATT_DRDD_Boot
+# Create a code for a LaTeX Table
+latex_code_nsw_DRDD <- xtable(Table_nsw_DRDD, caption = "DRDD results per model for the NSW Data")
+
+# Print the LaTeX code
+print(latex_code_nsw_DRDD, include.rownames = TRUE)
+```
+
+Now let's work with the DRDD - Bootstrap: No need
+```{r}
+# # to save the values
+# ATT_nsw_boot_DRDD <- c()
+# ATT_nsw_boot_DRDD_average <- c()
+# UCI_nsw_boot_DRDD <- c()
+# UCI_nsw_boot_DRDD_average <- c()
+# LCI_nsw_boot_DRDD <- c()
+# LCI_nsw_boot_DRDD_average <- c()
+# length_nsw_boot_DRDD <- c()
+# length_nsw_boot_DRDD_average <- c()
+# 
+# # extras-----------------------------------------------------------------------
+# average_uci_lci <- c()
+# UCI_nsw_boot_DRDD_xtra <- c()
+# LCI_nsw_boot_DRDD_xtra <- c()
+#   
+# for (i in 1:num_bootstrap_samples){
+#   
+#   ATT_nsw_boot_DRDD[i] <- NSW.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$ATT
+#   UCI_nsw_boot_DRDD[i] <- NSW.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$uci
+#   LCI_nsw_boot_DRDD[i] <- NSW.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$lci
+#   
+#   # To increase our values of the CI in a way that it will cover about 95% of the values  -------------
+#   
+#   # getting the average of the uci and lci
+#   
+#   average_uci_lci[i] <- (UCI_prod_boot_DRDD[i] + LCI_prod_boot_DRDD[i]) / 2
+#   
+#   UCI_nsw_boot_DRDD_xtra[i] <- NSW.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$uci + average_uci_lci[i] * 1.4
+#   LCI_nsw_boot_DRDD_xtra[i] <- NSW.results_DRDD.Boot[[paste("Boot", i, sep = "_")]]$lci - average_uci_lci[i] * 1.4
+#   
+#   # ---------------------------------------------------------------------------------------------------
+#   
+#   # To calculate the length of the intervals
+#   #length_prod_boot_DRDD[i] <- UCI_prod_boot_DRDD[i] - LCI_prod_boot_DRDD[i]
+#   length_nsw_boot_DRDD[i] <- UCI_nsw_boot_DRDD_xtra[i] - LCI_nsw_boot_DRDD_xtra[i]
+#   
+# }
+#   
+# # Average values
+# ATT_nsw_boot_DRDD_average <- mean(ATT_nsw_boot_DRDD)
+# UCI_nsw_boot_DRDD_average <- mean(UCI_nsw_boot_DRDD_xtra)
+# LCI_nsw_boot_DRDD_average <- mean(LCI_nsw_boot_DRDD_xtra)
+# length_nsw_boot_DRDD_average <- mean(length_nsw_boot_DRDD)
+# 
+# # Now to calculate the times the estimates ATT falls inside the average intervals
+# 
+# # Variables
+# counter_ATT_DRDD_Boot <- 0
+# times_ATT_DRDD_Boot <- c()
+# 
+# for (i in 1:num_bootstrap_samples){
+#   
+#   if(ATT_nsw_boot_DRDD[i] > LCI_nsw_boot_DRDD_average & ATT_pnsw_boot_DRDD[i] < UCI_nsw_boot_DRDD_average){
+#     
+#     counter_ATT_DRDD_Boot = counter_ATT_DRDD_Boot + 1
+#     
+#   }else{
+#     
+#     counter_ATT_DRDD_Boot = counter_ATT_DRDD_Boot + 0
+#     
+#   }
+#   
+# }
+# 
+# times_ATT_DRDD_Boot <- counter_ATT_DRDD_Boot
 
 ```
 
 Now let's do a beautiful last table
 ```{r}
-Table_DRDD_Produc_Boot <- as.data.frame(rbind(ATT_prod_boot_DRDD_average, UCI_prod_boot_DRDD_average, LCI_prod_boot_DRDD_average, length_prod_boot_DRDD_average, times_ATT_DRDD_Boot))
-
-colnames(Table_DRDD_Produc_Boot) <- "Average value for the Produc Data DRDD Bootstrapped estimation"
-
-rownames(Table_DRDD_Produc_Boot) <- c("ATT", "Upper CI", "Lower CI", "Length of the CI", "Times the CI cover the ATT")
-
-# Convert to LaTeX table format
-result_latex_DRDD <- xtable(Table_DRDD_Produc_Boot)
-
-# Print the LaTeX table
-print(result_latex_DRDD)
+# Table_DRDD_NSW_Boot <- as.data.frame(rbind(ATT_nsw_boot_DRDD_average, UCI_nsw_boot_DRDD_average, LCI_nsw_boot_DRDD_average, length_prod_boot_DRDD_average, times_ATT_DRDD_Boot))
+# 
+# colnames(Table_DRDD_NSW_Boot) <- "Average value for the Produc Data DRDD Bootstrapped estimation"
+# 
+# rownames(Table_DRDD_NSW_Boot) <- c("ATT", "Upper CI", "Lower CI", "Length of the CI", "Times the CI cover the ATT")
+# 
+# # Convert to LaTeX table format
+# result_latex_DRDD <- xtable(Table_DRDD_NSW_Boot)
+# 
+# # Print the LaTeX table
+# print(result_latex_DRDD)
 ```
 
 
