@@ -2873,7 +2873,9 @@ print(result_latex_CI)
 ```{r}
 set.seed(1)
 NSW.results_DDRD <- drdid_imp_panel(y1 = MyData2$re78, y0 = MyData2$re75, D = MyData2$treated78,
-                covariates = cbind(MyData2$educ78, MyData2$black78, MyData2$married78, MyData2$nodegree78, MyData2$hisp78, MyData2$age78, MyData2$re75, MyData2$propensity_scores))
+                covariates = cbind(MyData2$educ78, MyData2$black78, MyData2$married78, MyData2$nodegree78, MyData2$hisp78, MyData2$age78))
+
+#MyData2$propensity_scores,  MyData2$re75
 ```
 
 5th period results
